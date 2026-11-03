@@ -222,6 +222,12 @@ class VpnController(context: Context) {
         setBooleanPrefValue(true, OscPrefKey.RECONNECTION_ENABLED, oscPrefs)
         setIntPrefValue(2, OscPrefKey.RECONNECTION_COUNT, oscPrefs)
         setIntPrefValue(5, OscPrefKey.RECONNECTION_INTERVAL, oscPrefs)
+        // Some volunteer servers push no DNS at all — the tunnel comes up
+        // but every hostname fails with ERR_NAME_NOT_RESOLVED (Mazeen's
+        // 2026-11-03 test: first Japan server and the Romania server).
+        // Pin our own resolver; queries still travel inside the tunnel.
+        setBooleanPrefValue(true, OscPrefKey.DNS_DO_USE_CUSTOM_SERVER, oscPrefs)
+        setStringPrefValue("1.1.1.1", OscPrefKey.DNS_CUSTOM_ADDRESS, oscPrefs)
     }
 
     /**
