@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Neutral platform theme; all real styling is Compose (YpnBrowserTheme).
+         The default app theme is Midnight Cyan (dark), so the launch window
+         starts dark to match. -->
+    <style name="Theme.YPNBrowser" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B1220</item>
+        <item name="android:navigationBarColor">#0B1220</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
