@@ -189,7 +189,7 @@ private fun MenuRoot(
             }
             Switch(
                 checked = downloads.accelerationEnabled,
-                onCheckedChange = { downloads.setAccelerationEnabled(it) }
+                onCheckedChange = { downloads.applyAccelerationEnabled(it) }
             )
         }
 

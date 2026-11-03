@@ -128,7 +128,10 @@ class DownloadController private constructor(context: Context) {
 
     // ---- Settings --------------------------------------------------------
 
-    fun setAccelerationEnabled(enabled: Boolean) {
+    // Named apply*, not set*: a `fun setAccelerationEnabled` would clash on
+    // the JVM with the setter of `var accelerationEnabled` above (the same
+    // platform-declaration clash that broke the Phase 1 build).
+    fun applyAccelerationEnabled(enabled: Boolean) {
         accelerationEnabled = enabled
         store.acceleratorEnabled = enabled
     }
