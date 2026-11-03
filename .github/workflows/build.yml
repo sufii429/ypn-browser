@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,9 +29,19 @@ jobs:
       - name: Build the debug APK
         run: gradle :app:assembleDebug
 
-      - name: Upload the APK
+      - name: Upload the APK as an artifact
         uses: actions/upload-artifact@v4
         with:
           name: ypn-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
+
+      - name: Publish the APK to the direct-download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk ypn-browser.apk
+          gh release upload build-latest ypn-browser.apk --clobber || \
+          gh release create build-latest ypn-browser.apk \
+            --title "YPN Browser — latest build" \
+            --notes "Auto-published debug APK from the newest commit on main. Direct download: https://github.com/sufii429/ypn-browser/releases/download/build-latest/ypn-browser.apk"
+            
