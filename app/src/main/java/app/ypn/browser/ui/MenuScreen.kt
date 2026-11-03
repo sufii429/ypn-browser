@@ -148,7 +148,7 @@ private fun MenuRoot(
             }
             Switch(
                 checked = controller.desktopMode,
-                onCheckedChange = { controller.setDesktopMode(it) }
+                onCheckedChange = { controller.applyDesktopMode(it) }
             )
         }
 

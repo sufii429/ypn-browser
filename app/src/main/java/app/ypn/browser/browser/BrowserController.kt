@@ -195,7 +195,7 @@ class BrowserController(context: Context) {
 
     // ---------- Desktop mode ----------
 
-    fun setDesktopMode(enabled: Boolean) {
+    fun applyDesktopMode(enabled: Boolean) {
         desktopMode = enabled
         store.desktopMode = enabled
         webViews.values.forEach { wv ->
