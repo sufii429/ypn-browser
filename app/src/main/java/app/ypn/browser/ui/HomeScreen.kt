@@ -56,14 +56,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
+import app.ypn.browser.vpn.VpnController
+import app.ypn.browser.vpn.VpnPhase
+import app.ypn.browser.vpn.VpnServer
 
 /**
  * Home screen — a Compose port of the approved design mockups
  * ("browser-app-design-mockups"). Since Phase 1 the address bar and
  * quick tiles really browse (via [onNavigate]) and the tab count is
- * live; the VPN card (Phase 2) and download card (Phase 3) are still
- * placeholder samples from the mockups. Theme switching re-skins the
- * whole screen via YpnBrowserTheme.
+ * live; since Phase 2 the VPN card shows the real SSTP tunnel state
+ * (via [vpn]) — tapping it opens the VPN screen ([onVpnOpen]), its
+ * button connects / disconnects (via [onVpnConnectRequest]). Only the
+ * download card (Phase 3) is still a mockup sample. Theme switching
+ * re-skins the whole screen via YpnBrowserTheme.
  */
 @Composable
 fun HomeScreen(
@@ -71,6 +76,9 @@ fun HomeScreen(
     onThemeChange: (YpnThemeId) -> Unit,
     tabCount: Int,
     onNavigate: (String) -> Unit,
+    vpn: VpnController,
+    onVpnOpen: () -> Unit,
+    onVpnConnectRequest: (VpnServer) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -82,12 +90,12 @@ fun HomeScreen(
     ) {
         AppHeader()
         AddressBar(tabCount = tabCount, onNavigate = onNavigate)
-        VpnCard()
+        VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
         DownloadCard()
         QuickTiles(onNavigate = onNavigate)
         ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
         Text(
-            text = "Phase 1 — browsing is live. VPN (Phase 2) and downloads (Phase 3) are placeholders.",
+            text = "Phase 2 — browsing and the built-in VPN are live. Downloads arrive in Phase 3.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -208,13 +216,61 @@ private fun AddressBar(tabCount: Int, onNavigate: (String) -> Unit) {
 }
 
 @Composable
-private fun VpnCard() {
+private fun VpnCard(
+    vpn: VpnController,
+    onOpen: () -> Unit,
+    onConnectRequest: (VpnServer) -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
+    val phase = vpn.phase
+    val server = vpn.currentServer
+
+    val dotColor = when (phase) {
+        VpnPhase.ON -> palette.data
+        VpnPhase.CONNECTING -> colors.primary
+        VpnPhase.FAILED -> colors.error
+        VpnPhase.OFF -> palette.muted
+    }
+    val title = when (phase) {
+        VpnPhase.ON -> "VPN ON"
+        VpnPhase.CONNECTING -> "VPN CONNECTING"
+        VpnPhase.FAILED -> "VPN FAILED"
+        VpnPhase.OFF -> "VPN OFF"
+    }
+    val headline = when {
+        phase == VpnPhase.OFF -> "Not connected"
+        server != null -> server.countryLong.ifBlank { server.sstpHost }
+        else -> "VPN Gate"
+    }
+    val subline = when (phase) {
+        VpnPhase.ON -> buildAnnotatedString {
+            append("VPN Gate server · ")
+            withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Bold)) {
+                append("TCP 443")
+            }
+            vpn.assignedIp?.let { append(" · $it") }
+        }
+        VpnPhase.CONNECTING -> buildAnnotatedString {
+            append(vpn.statusText.ifBlank { "Connecting…" })
+        }
+        VpnPhase.FAILED -> buildAnnotatedString {
+            append(vpn.statusText.ifBlank { "Connection failed — tap to retry" })
+        }
+        VpnPhase.OFF -> buildAnnotatedString {
+            append("VPN Gate server · ")
+            withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Bold)) {
+                append("TCP 443")
+            }
+            append(" · MS-SSTP")
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+            .clickable { onOpen() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = colors.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
@@ -225,56 +281,70 @@ private fun VpnCard() {
                     modifier = Modifier
                         .size(17.dp)
                         .clip(CircleShape)
-                        .background(palette.data.copy(alpha = 0.18f)),
+                        .background(dotColor.copy(alpha = 0.18f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
                             .size(9.dp)
                             .clip(CircleShape)
-                            .background(palette.data)
+                            .background(dotColor)
                     )
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "VPN ON",
+                    text = title,
                     color = colors.onSurface,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 0.8.sp
                 )
                 Spacer(Modifier.weight(1f))
-                Text(text = "🇯🇵", fontSize = 16.sp)
+                Text(text = server?.flagEmoji ?: "🌐", fontSize = 16.sp)
             }
             Text(
-                text = "Japan · Tokyo",
+                text = headline,
                 color = colors.onSurface,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(top = 7.dp)
             )
             Text(
-                text = buildAnnotatedString {
-                    append("VPN Gate server · ")
-                    withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Bold)) {
-                        append("TCP 443")
-                    }
-                    append(" · connected 12 min")
-                },
+                text = subline,
                 color = palette.muted,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp)
             )
-            OutlinedButton(
-                onClick = { /* Phase 2: disconnect the SSTP tunnel */ },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 11.dp),
-                shape = RoundedCornerShape(11.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary)
-            ) {
-                Text(text = "Disconnect", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            when (phase) {
+                VpnPhase.ON, VpnPhase.CONNECTING -> OutlinedButton(
+                    onClick = { vpn.disconnect() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 11.dp),
+                    shape = RoundedCornerShape(11.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary)
+                ) {
+                    Text(
+                        text = if (phase == VpnPhase.ON) "Disconnect" else "Cancel",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                VpnPhase.OFF, VpnPhase.FAILED -> OutlinedButton(
+                    onClick = {
+                        val target = vpn.currentServer ?: vpn.servers.firstOrNull()
+                        if (target != null) onConnectRequest(target) else onOpen()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 11.dp),
+                    shape = RoundedCornerShape(11.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary)
+                ) {
+                    Text(text = "Connect", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

@@ -1,6 +1,9 @@
 package app.ypn.browser.ui
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +35,8 @@ import androidx.compose.ui.unit.sp
 import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
+import app.ypn.browser.vpn.VpnController
+import app.ypn.browser.vpn.VpnServer
 
 private enum class YpnSection(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Filled.Home),
@@ -45,24 +50,49 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * with badge / Menu) around the screens. Since Phase 1 the Home section
  * swaps between the home screen and the live browser view, Tabs is the
  * real tab list, and Menu holds bookmarks / history / desktop mode /
- * theme. Downloads stays a placeholder until Phase 3.
+ * theme. Since Phase 2 the Home section can also show the VPN screen
+ * (VPN Gate server list + tunnel status), and this shell owns the
+ * Android VPN-consent launcher the VPN flow needs. Downloads stays a
+ * placeholder until Phase 3.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     val context = LocalContext.current
     val controller = remember { BrowserController(context) }
+    val vpn = remember { VpnController(context) }
     var selected by remember { mutableStateOf(YpnSection.HOME) }
+    var showVpn by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
-    // System Back: inside the browser it walks the page history first,
-    // then leaves the browser for the Home screen; from any other
-    // section it returns to Home.
-    BackHandler(enabled = selected == YpnSection.HOME && controller.browsing) {
+    // VPN consent: VpnController.requestConnect returns the system's
+    // consent intent when approval is still needed; on approval we
+    // actually dial. (If it returns null, it already started.)
+    val vpnConsentLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            vpn.beginConnect()
+        }
+    }
+    val onVpnConnectRequest: (VpnServer) -> Unit = { server ->
+        vpn.requestConnect(server)?.let { consentIntent ->
+            vpnConsentLauncher.launch(consentIntent)
+        }
+    }
+
+    // System Back: from the VPN screen it returns to Home content;
+    // inside the browser it walks the page history first, then leaves
+    // the browser for the Home screen; from any other section it
+    // returns to Home.
+    BackHandler(enabled = showVpn) {
+        showVpn = false
+    }
+    BackHandler(enabled = !showVpn && selected == YpnSection.HOME && controller.browsing) {
         if (!controller.goBackInPage()) {
             controller.browsing = false
         }
     }
-    BackHandler(enabled = selected != YpnSection.HOME) {
+    BackHandler(enabled = !showVpn && selected != YpnSection.HOME) {
         selected = YpnSection.HOME
     }
 
@@ -75,6 +105,7 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                         selected = isSelected,
                         onClick = {
                             selected = section
+                            showVpn = false
                             if (section == YpnSection.HOME) {
                                 controller.browsing = false
                             }
@@ -116,7 +147,13 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
         ) {
             when (selected) {
                 YpnSection.HOME -> {
-                    if (controller.browsing) {
+                    if (showVpn) {
+                        VpnScreen(
+                            vpn = vpn,
+                            onConnectRequest = onVpnConnectRequest,
+                            onBack = { showVpn = false }
+                        )
+                    } else if (controller.browsing) {
                         BrowserScreen(
                             controller = controller,
                             onHome = { controller.browsing = false }
@@ -126,7 +163,10 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             themeId = themeId,
                             onThemeChange = onThemeChange,
                             tabCount = controller.tabs.size,
-                            onNavigate = { controller.openInNewTab(it) }
+                            onNavigate = { controller.openInNewTab(it) },
+                            vpn = vpn,
+                            onVpnOpen = { showVpn = true },
+                            onVpnConnectRequest = onVpnConnectRequest
                         )
                     }
                 }

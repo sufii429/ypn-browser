@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 0.2.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 0.3.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## Themes
@@ -42,15 +42,25 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   search bar and quick tiles browse for real, and its tab count is
   live. File downloads just toast "Downloads arrive in Phase 3" for
   now.
-- **Phase 2 — built-in VPN.** Free **VPN Gate** servers over
+- **Phase 2 — built-in VPN (done).** Free **VPN Gate** servers over
   **MS-SSTP** (genuine TLS on TCP 443). Decided by Mazeen's 2026-11-03
   phone tests on mobile data: WireGuard is UDP-blocked by his carrier
   and plain OpenVPN-over-TCP gets connection-reset, while MS-SSTP
   connected and opened a Pakistan-blocked site. Engine: the
   open-source **Open SSTP Client** core (kittoku, MIT, Kotlin — built
   for SoftEther servers, which is what VPN Gate servers are), embedded
-  in-app; server list filtered to MS-SSTP + TCP 443, with
-  auto-reconnect and failover (volunteer servers drop).
+  in-app in its original `kittoku.osc` packages (license:
+  `third_party/Open-SSTP-Client-LICENSE`). The VPN screen shows the
+  live VPN Gate relay list (fetched from vpngate.net, cached on the
+  phone, sorted by score; every server is reached as
+  `<hostname>.opengw.net` on TCP 443 with the public `vpn` / `vpn`
+  login built in). Tapping a server connects; the home card mirrors
+  the tunnel state with a working Connect / Disconnect. Drops are
+  handled twice over: the engine retries the same server, and if the
+  service still dies YPN walks down the list to the next servers
+  (bounded attempts). One honest limit: OSC reports failure only by
+  ending the service, so failover reacts to service stop, not to a
+  specific error message.
 - **Phase 3 — downloads + accelerator.** Download manager (pause/resume,
   multi-part) plus the signature feature: one file pulled over Wi-Fi
   and mobile data **simultaneously** via network-bound sockets, with
@@ -58,6 +68,18 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   travel outside the VPN tunnel by design.
 - **Phase 4 — polish & release.** GitHub Actions build, release APK,
   on-phone verification.
+
+## Third-party components
+
+- **Open SSTP Client** by KOBAYASHI Ittoku (kittoku) —
+  https://github.com/kittoku/Open-SSTP-Client — MIT License
+  (full text: `third_party/Open-SSTP-Client-LICENSE`). Its core
+  (everything except its own UI) ships in this app under
+  `app/src/main/java/kittoku/osc/`, with two adaptations: resource
+  references point at this app's `R` class, and the
+  untrusted-certificate notification is informational only (upstream
+  offers to save the certificate through its settings UI, which YPN
+  does not embed).
 
 ## Notes
 

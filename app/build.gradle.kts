@@ -12,8 +12,8 @@ android {
         applicationId = "app.ypn.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -49,6 +49,12 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // Phase 2: embedded Open SSTP Client core (kittoku.osc) —
+    // PreferenceManager, DocumentFile (log export), coroutines engine.
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.preference.ktx)
+    implementation(libs.androidx.documentfile)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
