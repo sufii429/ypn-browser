@@ -1,7 +1,29 @@
+import java.util.Base64
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+// --- Permanent CI debug signing -------------------------------------------
+// GitHub-hosted runners are ephemeral: without this, every build would get a
+// fresh debug key, so new APKs could not install over old ones (and the app's
+// data would be wiped by the forced uninstall each time).
+// The repo carries our own debug keystore as base64 (debug-keystore.b64 at
+// the project root — the standard public debug credentials, not a secret).
+// Decode it once per build and sign the debug variant with it, so the
+// signature is stable forever:
+// SHA-1: 82:7E:10:86:72:E0:E0:7A:5B:80:12:49:D1:46:11:0B:BE:32:EA:3B
+val ciDebugKeystore: File? = run {
+    val b64 = rootProject.file("debug-keystore.b64")
+    if (!b64.exists()) return@run null
+    val out = layout.buildDirectory.file("ci-debug.keystore").get().asFile
+    if (!out.exists()) {
+        out.parentFile.mkdirs()
+        out.writeBytes(Base64.getMimeDecoder().decode(b64.readText()))
+    }
+    out
 }
 
 android {
@@ -12,8 +34,8 @@ android {
         applicationId = "app.ypn.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -21,7 +43,23 @@ android {
         }
     }
 
+    signingConfigs {
+        if (ciDebugKeystore != null) {
+            create("ciDebug") {
+                storeFile = ciDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (ciDebugKeystore != null) {
+                signingConfig = signingConfigs.getByName("ciDebug")
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
