@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.History
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ypn.browser.browser.BrowserController
+import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 
@@ -42,12 +44,13 @@ private enum class MenuPage { ROOT, BOOKMARKS, HISTORY }
 
 /**
  * The real Menu (Phase 1): Bookmarks, History, the global Desktop mode
- * toggle, and the theme picker (shared with the Home screen). VPN and
- * Downloads entries stay honest placeholders for Phases 2 and 3.
+ * toggle, and the theme picker (shared with the Home screen). Since
+ * Phase 3 it also holds the dual-network acceleration toggle.
  */
 @Composable
 fun MenuScreen(
     controller: BrowserController,
+    downloads: DownloadController,
     themeId: YpnThemeId,
     onThemeChange: (YpnThemeId) -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -70,6 +73,7 @@ fun MenuScreen(
         )
         MenuPage.ROOT -> MenuRoot(
             controller = controller,
+            downloads = downloads,
             themeId = themeId,
             onThemeChange = onThemeChange,
             onShowBookmarks = { page = MenuPage.BOOKMARKS },
@@ -82,6 +86,7 @@ fun MenuScreen(
 @Composable
 private fun MenuRoot(
     controller: BrowserController,
+    downloads: DownloadController,
     themeId: YpnThemeId,
     onThemeChange: (YpnThemeId) -> Unit,
     onShowBookmarks: () -> Unit,
@@ -151,11 +156,47 @@ private fun MenuRoot(
                 onCheckedChange = { controller.applyDesktopMode(it) }
             )
         }
+        MenuDivider()
+
+        // Dual-network acceleration — downloads pull over Wi-Fi and
+        // mobile data at the same time (Phase 3's signature feature).
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Bolt,
+                contentDescription = null,
+                tint = colors.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Dual-network acceleration",
+                    color = colors.onSurface,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Downloads use Wi-Fi and mobile data together — " +
+                        "faster, but mobile data is consumed",
+                    color = palette.muted,
+                    fontSize = 11.sp
+                )
+            }
+            Switch(
+                checked = downloads.accelerationEnabled,
+                onCheckedChange = { downloads.setAccelerationEnabled(it) }
+            )
+        }
 
         ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
 
         Text(
-            text = "Built-in VPN arrives in Phase 2 · Downloads in Phase 3.",
+            text = "Browsing, the built-in VPN and downloads are all live (Phases 1–3).",
             color = palette.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)

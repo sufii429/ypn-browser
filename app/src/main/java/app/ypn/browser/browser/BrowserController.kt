@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Message
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -19,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.ypn.browser.data.BrowserStore
 import app.ypn.browser.data.SavedPage
+import app.ypn.browser.download.DownloadController
 import java.net.URLEncoder
 
 /** One browser tab. Its WebView lives in the controller's map, not here. */
@@ -42,7 +44,7 @@ class BrowserTab(val id: Int) {
  * Everything Compose reads is snapshot state, so the UI stays in sync
  * with WebView callbacks.
  */
-class BrowserController(context: Context) {
+class BrowserController(context: Context, private val downloads: DownloadController) {
 
     private val store = BrowserStore(context.applicationContext)
 
@@ -303,10 +305,19 @@ class BrowserController(context: Context) {
                 resultMsg: Message?
             ): Boolean = false // pop-ups stay blocked
         }
-        wv.setDownloadListener { _, _, _, _, _ ->
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            if (url.isNullOrBlank()) return@setDownloadListener
+            // Session cookies travel with the download so logged-in
+            // file links keep working in the download engine.
+            val cookie = try {
+                CookieManager.getInstance().getCookie(url)
+            } catch (e: Exception) {
+                null
+            }
+            downloads.enqueueFromBrowser(url, userAgent, contentDisposition, mimeType, cookie)
             Toast.makeText(
                 context,
-                "Downloads arrive in Phase 3",
+                "Download started",
                 Toast.LENGTH_SHORT
             ).show()
         }

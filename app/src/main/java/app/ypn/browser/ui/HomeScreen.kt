@@ -24,7 +24,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Card
@@ -54,6 +56,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.ypn.browser.download.DownloadController
+import app.ypn.browser.download.DownloadStatus
+import app.ypn.browser.download.formatBytes
+import app.ypn.browser.download.formatMbps
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 import app.ypn.browser.vpn.VpnController
@@ -66,8 +72,10 @@ import app.ypn.browser.vpn.VpnServer
  * quick tiles really browse (via [onNavigate]) and the tab count is
  * live; since Phase 2 the VPN card shows the real SSTP tunnel state
  * (via [vpn]) — tapping it opens the VPN screen ([onVpnOpen]), its
- * button connects / disconnects (via [onVpnConnectRequest]). Only the
- * download card (Phase 3) is still a mockup sample. Theme switching
+ * button connects / disconnects (via [onVpnConnectRequest]). Since
+ * Phase 3 the download card mirrors the top active download from
+ * [downloads] with its measured per-network data, and collapses to a
+ * slim "No active downloads" card otherwise. Theme switching
  * re-skins the whole screen via YpnBrowserTheme.
  */
 @Composable
@@ -79,6 +87,8 @@ fun HomeScreen(
     vpn: VpnController,
     onVpnOpen: () -> Unit,
     onVpnConnectRequest: (VpnServer) -> Unit,
+    downloads: DownloadController,
+    onDownloadsOpen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -91,11 +101,11 @@ fun HomeScreen(
         AppHeader()
         AddressBar(tabCount = tabCount, onNavigate = onNavigate)
         VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
-        DownloadCard()
+        DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
         QuickTiles(onNavigate = onNavigate)
         ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
         Text(
-            text = "Phase 2 — browsing and the built-in VPN are live. Downloads arrive in Phase 3.",
+            text = "Phase 3 — browsing, the built-in VPN and downloads with dual-network acceleration are live.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -351,13 +361,69 @@ private fun VpnCard(
 }
 
 @Composable
-private fun DownloadCard() {
+private fun DownloadCard(
+    downloads: DownloadController,
+    onOpenDownloads: () -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
+    val item = downloads.topActive
+
+    if (item == null) {
+        // Nothing in flight: a slim card that taps through to Downloads.
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                .clickable { onOpenDownloads() },
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = colors.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Download,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = "No active downloads",
+                    color = colors.onSurface,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "Downloads",
+                    color = palette.muted,
+                    fontSize = 11.sp
+                )
+            }
+        }
+        return
+    }
+
+    // The mockup layout, fed with the top download's measured data.
+    val downloading = item.status == DownloadStatus.DOWNLOADING
+    val basis = if (item.totalBytes > 0) {
+        item.totalBytes.toFloat()
+    } else {
+        maxOf(item.downloadedBytes, 1L).toFloat()
+    }
+    val wifiShare = item.wifiBytes / basis
+    val cellShare = item.cellBytes / basis
+    val restShare = (1f - wifiShare - cellShare).coerceAtLeast(0f)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+            .clickable { onOpenDownloads() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = colors.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
@@ -366,7 +432,7 @@ private fun DownloadCard() {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = "tiny-troopers-2.apk",
+                        text = item.fileName,
                         color = colors.onSurface,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
@@ -374,7 +440,12 @@ private fun DownloadCard() {
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "412 MB of 634 MB · 65%",
+                        text = if (item.totalBytes > 0) {
+                            "${formatBytes(item.downloadedBytes)} of " +
+                                "${formatBytes(item.totalBytes)} · ${(item.percent * 100).toInt()}%"
+                        } else {
+                            "${formatBytes(item.downloadedBytes)} downloaded"
+                        },
                         color = palette.muted,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(top = 1.dp)
@@ -384,20 +455,27 @@ private fun DownloadCard() {
                     modifier = Modifier
                         .size(30.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(colors.primary),
+                        .background(colors.primary)
+                        .clickable {
+                            if (downloading) {
+                                downloads.pause(item.id)
+                            } else {
+                                downloads.resume(item.id)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Pause,
-                        contentDescription = "Pause",
+                        imageVector = if (downloading) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (downloading) "Pause" else "Resume",
                         tint = palette.onAccent,
                         modifier = Modifier.size(14.dp)
                     )
                 }
             }
 
-            // Split bar: Wi-Fi share (38%) and mobile-data share (27%) of the
-            // file so far, the rest still to go — the mockups' signature bar.
+            // Split bar: each network's measured share of the file so
+            // far, the rest still to go — the mockups' signature bar.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -406,17 +484,33 @@ private fun DownloadCard() {
                     .clip(RoundedCornerShape(6.dp))
                     .background(palette.surface2)
             ) {
-                Box(Modifier.weight(38f).fillMaxHeight().background(palette.wifi))
-                Box(Modifier.weight(27f).fillMaxHeight().background(palette.data))
-                Box(Modifier.weight(35f).fillMaxHeight())
+                if (wifiShare > 0f) {
+                    Box(Modifier.weight(wifiShare).fillMaxHeight().background(palette.wifi))
+                }
+                if (cellShare > 0f) {
+                    Box(Modifier.weight(cellShare).fillMaxHeight().background(palette.data))
+                }
+                if (restShare > 0f) {
+                    Box(Modifier.weight(restShare).fillMaxHeight())
+                }
             }
 
             Row(
                 modifier = Modifier.padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                LegendItem(color = palette.wifi, label = "Wi-Fi · 38%")
-                LegendItem(color = palette.data, label = "Mobile Data · 27%")
+                if (item.wifiBytes > 0) {
+                    LegendItem(
+                        color = palette.wifi,
+                        label = "Wi-Fi · ${(wifiShare * 100).toInt()}%"
+                    )
+                }
+                if (item.cellBytes > 0) {
+                    LegendItem(
+                        color = palette.data,
+                        label = "Mobile Data · ${(cellShare * 100).toInt()}%"
+                    )
+                }
             }
 
             Box(
@@ -429,14 +523,41 @@ private fun DownloadCard() {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = palette.wifi)) { append("Wi-Fi 18 Mbps") }
-                        append(" + ")
-                        withStyle(SpanStyle(color = palette.data)) { append("Data 12 Mbps") }
-                        append(" = ")
-                        withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.ExtraBold)) {
-                            append("30 Mbps")
-                        }
+                    text = when {
+                        downloading && item.wifiSpeedBps > 0 && item.cellSpeedBps > 0 ->
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = palette.wifi)) {
+                                    append("Wi-Fi ${formatMbps(item.wifiSpeedBps)}")
+                                }
+                                append(" + ")
+                                withStyle(SpanStyle(color = palette.data)) {
+                                    append("Data ${formatMbps(item.cellSpeedBps)}")
+                                }
+                                append(" = ")
+                                withStyle(
+                                    SpanStyle(
+                                        color = colors.primary,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                ) {
+                                    append(formatMbps(item.speedBps))
+                                }
+                            }
+                        downloading && item.cellSpeedBps > 0 ->
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = palette.data)) {
+                                    append("Data ${formatMbps(item.cellSpeedBps)}")
+                                }
+                            }
+                        downloading ->
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = palette.wifi)) {
+                                    append("Wi-Fi ${formatMbps(item.wifiSpeedBps)}")
+                                }
+                            }
+                        item.status == DownloadStatus.QUEUED ->
+                            buildAnnotatedString { append("Queued") }
+                        else -> buildAnnotatedString { append("Paused") }
                     },
                     color = colors.onSurface,
                     fontSize = 12.sp,

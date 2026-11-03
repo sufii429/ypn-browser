@@ -27,12 +27,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.sp
 import app.ypn.browser.browser.BrowserController
+import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 import app.ypn.browser.vpn.VpnController
@@ -52,13 +51,16 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * real tab list, and Menu holds bookmarks / history / desktop mode /
  * theme. Since Phase 2 the Home section can also show the VPN screen
  * (VPN Gate server list + tunnel status), and this shell owns the
- * Android VPN-consent launcher the VPN flow needs. Downloads stays a
- * placeholder until Phase 3.
+ * Android VPN-consent launcher the VPN flow needs. Since Phase 3 the
+ * Downloads section is the real download manager, fed by the
+ * process-wide DownloadController singleton (shared with the download
+ * foreground service), and the Downloads badge counts live downloads.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     val context = LocalContext.current
-    val controller = remember { BrowserController(context) }
+    val downloads = remember { DownloadController.get(context) }
+    val controller = remember { BrowserController(context, downloads) }
     val vpn = remember { VpnController(context) }
     var selected by remember { mutableStateOf(YpnSection.HOME) }
     var showVpn by remember { mutableStateOf(false) }
@@ -118,13 +120,13 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             unselectedTextColor = LocalYpnPalette.current.muted
                         ),
                         icon = {
-                            if (section == YpnSection.DOWNLOADS) {
+                            if (section == YpnSection.DOWNLOADS && downloads.activeCount > 0) {
                                 BadgedBox(
                                     badge = {
                                         Badge(
                                             containerColor = LocalYpnPalette.current.data,
                                             contentColor = LocalYpnPalette.current.onAccent
-                                        ) { Text("2") }
+                                        ) { Text(downloads.activeCount.toString()) }
                                     }
                                 ) {
                                     Icon(imageVector = section.icon, contentDescription = section.label)
@@ -166,7 +168,9 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             onNavigate = { controller.openInNewTab(it) },
                             vpn = vpn,
                             onVpnOpen = { showVpn = true },
-                            onVpnConnectRequest = onVpnConnectRequest
+                            onVpnConnectRequest = onVpnConnectRequest,
+                            downloads = downloads,
+                            onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
                         )
                     }
                 }
@@ -182,9 +186,10 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                         selected = YpnSection.HOME
                     }
                 )
-                YpnSection.DOWNLOADS -> PlaceholderTab("Downloads arrive with the download manager in Phase 3.")
+                YpnSection.DOWNLOADS -> DownloadsScreen(downloads = downloads)
                 YpnSection.MENU -> MenuScreen(
                     controller = controller,
+                    downloads = downloads,
                     themeId = themeId,
                     onThemeChange = onThemeChange,
                     onOpenUrl = { url ->
@@ -194,16 +199,5 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderTab(message: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(
-            text = message,
-            color = LocalYpnPalette.current.muted,
-            fontSize = 13.sp
-        )
     }
 }

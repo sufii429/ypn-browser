@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 0.3.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 0.4.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## Themes
@@ -40,8 +40,8 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   pop-up blocking (no multiple windows, JS windows refused); loading
   progress bar; system Back walks page history first. Home screen
   search bar and quick tiles browse for real, and its tab count is
-  live. File downloads just toast "Downloads arrive in Phase 3" for
-  now.
+  live. (File downloads toasted "Downloads arrive in Phase 3" until
+  Phase 3 wired the listener to the real download manager.)
 - **Phase 2 — built-in VPN (done).** Free **VPN Gate** servers over
   **MS-SSTP** (genuine TLS on TCP 443). Decided by Mazeen's 2026-11-03
   phone tests on mobile data: WireGuard is UDP-blocked by his carrier
@@ -61,11 +61,28 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   (bounded attempts). One honest limit: OSC reports failure only by
   ending the service, so failover reacts to service stop, not to a
   specific error message.
-- **Phase 3 — downloads + accelerator.** Download manager (pause/resume,
-  multi-part) plus the signature feature: one file pulled over Wi-Fi
-  and mobile data **simultaneously** via network-bound sockets, with
-  an on/off setting and a downloads-only mode. Accelerated downloads
-  travel outside the VPN tunnel by design.
+- **Phase 3 — downloads + accelerator (done).** A real download
+  manager: browser download links and pasted URLs enqueue downloads
+  that run under a foreground service, survive app restarts (as
+  paused, with progress), and land in the app's own Downloads folder
+  (opened via FileProvider, no storage permission). Servers that
+  accept HTTP ranges get multi-part downloads — the file is split
+  into ~2 MB chunks written in parallel into one preallocated `.part`
+  file, with per-chunk counters, so pause/resume continues exactly
+  where it stopped. Servers without ranges fall back to a single
+  stream; there, pause keeps the partial bytes but resume restarts
+  the stream from the beginning (no mid-file continuation exists
+  without ranges). The signature accelerator: chunk workers bind
+  their connections to the physical Wi-Fi and cellular networks
+  (cellular is requested explicitly, since Wi-Fi is normally the
+  default route), so one file is pulled over **both networks at
+  once** and the UI's split bar and speeds come from bytes actually
+  counted per network. Sockets bound to a physical network bypass the
+  system VPN, so accelerated downloads travel outside the SSTP tunnel
+  **by design**; with the accelerator off (Menu toggle), downloads
+  use the default route like everything else. If only one network is
+  available, downloads simply run on it and the UI says so. Note the
+  toggle's flip side: accelerated downloads consume mobile data.
 - **Phase 4 — polish & release.** GitHub Actions build, release APK,
   on-phone verification.
 
