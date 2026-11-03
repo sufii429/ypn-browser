@@ -1,5 +1,6 @@
 package app.ypn.browser.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,11 +27,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 
-private enum class YpnTab(val label: String, val icon: ImageVector) {
+private enum class YpnSection(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Filled.Home),
     TABS("Tabs", Icons.Filled.Tab),
     DOWNLOADS("Downloads", Icons.Filled.Download),
@@ -38,24 +41,44 @@ private enum class YpnTab(val label: String, val icon: ImageVector) {
 }
 
 /**
- * App shell: the mockups' bottom navigation (Home / Tabs / Downloads with
- * badge / Menu) around the Phase 0 home screen. Non-home tabs are simple
- * placeholders until their phases land (browser core Phase 1, downloads
- * Phase 3).
+ * App shell: the mockups' bottom navigation (Home / Tabs / Downloads
+ * with badge / Menu) around the screens. Since Phase 1 the Home section
+ * swaps between the home screen and the live browser view, Tabs is the
+ * real tab list, and Menu holds bookmarks / history / desktop mode /
+ * theme. Downloads stays a placeholder until Phase 3.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
-    var selected by remember { mutableStateOf(YpnTab.HOME) }
+    val context = LocalContext.current
+    val controller = remember { BrowserController(context) }
+    var selected by remember { mutableStateOf(YpnSection.HOME) }
     val colors = MaterialTheme.colorScheme
+
+    // System Back: inside the browser it walks the page history first,
+    // then leaves the browser for the Home screen; from any other
+    // section it returns to Home.
+    BackHandler(enabled = selected == YpnSection.HOME && controller.browsing) {
+        if (!controller.goBackInPage()) {
+            controller.browsing = false
+        }
+    }
+    BackHandler(enabled = selected != YpnSection.HOME) {
+        selected = YpnSection.HOME
+    }
 
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = colors.surface) {
-                YpnTab.entries.forEach { tab ->
-                    val isSelected = tab == selected
+                YpnSection.entries.forEach { section ->
+                    val isSelected = section == selected
                     NavigationBarItem(
                         selected = isSelected,
-                        onClick = { selected = tab },
+                        onClick = {
+                            selected = section
+                            if (section == YpnSection.HOME) {
+                                controller.browsing = false
+                            }
+                        },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = colors.primary,
                             selectedTextColor = colors.primary,
@@ -64,7 +87,7 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             unselectedTextColor = LocalYpnPalette.current.muted
                         ),
                         icon = {
-                            if (tab == YpnTab.DOWNLOADS) {
+                            if (section == YpnSection.DOWNLOADS) {
                                 BadgedBox(
                                     badge = {
                                         Badge(
@@ -73,13 +96,13 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                                         ) { Text("2") }
                                     }
                                 ) {
-                                    Icon(imageVector = tab.icon, contentDescription = tab.label)
+                                    Icon(imageVector = section.icon, contentDescription = section.label)
                                 }
                             } else {
-                                Icon(imageVector = tab.icon, contentDescription = tab.label)
+                                Icon(imageVector = section.icon, contentDescription = section.label)
                             }
                         },
-                        label = { Text(tab.label) }
+                        label = { Text(section.label) }
                     )
                 }
             }
@@ -92,10 +115,43 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                 .padding(innerPadding)
         ) {
             when (selected) {
-                YpnTab.HOME -> HomeScreen(themeId = themeId, onThemeChange = onThemeChange)
-                YpnTab.TABS -> PlaceholderTab("Tabs arrive with the browser core in Phase 1.")
-                YpnTab.DOWNLOADS -> PlaceholderTab("Downloads arrive with the download manager in Phase 3.")
-                YpnTab.MENU -> PlaceholderTab("Menu arrives in a later phase.")
+                YpnSection.HOME -> {
+                    if (controller.browsing) {
+                        BrowserScreen(
+                            controller = controller,
+                            onHome = { controller.browsing = false }
+                        )
+                    } else {
+                        HomeScreen(
+                            themeId = themeId,
+                            onThemeChange = onThemeChange,
+                            tabCount = controller.tabs.size,
+                            onNavigate = { controller.openInNewTab(it) }
+                        )
+                    }
+                }
+                YpnSection.TABS -> TabsScreen(
+                    controller = controller,
+                    onSelect = { id ->
+                        controller.selectTab(id)
+                        selected = YpnSection.HOME
+                    },
+                    onNewTab = {
+                        controller.newTab(null)
+                        controller.browsing = true
+                        selected = YpnSection.HOME
+                    }
+                )
+                YpnSection.DOWNLOADS -> PlaceholderTab("Downloads arrive with the download manager in Phase 3.")
+                YpnSection.MENU -> MenuScreen(
+                    controller = controller,
+                    themeId = themeId,
+                    onThemeChange = onThemeChange,
+                    onOpenUrl = { url ->
+                        controller.openInNewTab(url)
+                        selected = YpnSection.HOME
+                    }
+                )
             }
         }
     }

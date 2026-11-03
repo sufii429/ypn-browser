@@ -18,11 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,12 +35,21 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -46,16 +58,19 @@ import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 
 /**
- * Phase 0 static home screen — a Compose port of the approved design
- * mockups ("browser-app-design-mockups"). Every value on it (VPN state,
- * server, download numbers) is a placeholder sample from the mockups;
- * nothing here is wired to a browser engine, VPN, or download yet.
- * Theme switching re-skins the whole screen via YpnBrowserTheme.
+ * Home screen — a Compose port of the approved design mockups
+ * ("browser-app-design-mockups"). Since Phase 1 the address bar and
+ * quick tiles really browse (via [onNavigate]) and the tab count is
+ * live; the VPN card (Phase 2) and download card (Phase 3) are still
+ * placeholder samples from the mockups. Theme switching re-skins the
+ * whole screen via YpnBrowserTheme.
  */
 @Composable
 fun HomeScreen(
     themeId: YpnThemeId,
     onThemeChange: (YpnThemeId) -> Unit,
+    tabCount: Int,
+    onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -66,13 +81,13 @@ fun HomeScreen(
             .padding(bottom = 16.dp)
     ) {
         AppHeader()
-        AddressBar()
+        AddressBar(tabCount = tabCount, onNavigate = onNavigate)
         VpnCard()
         DownloadCard()
-        QuickTiles()
+        QuickTiles(onNavigate = onNavigate)
         ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
         Text(
-            text = "Phase 0 preview — VPN, browsing and downloads are placeholders.",
+            text = "Phase 1 — browsing is live. VPN (Phase 2) and downloads (Phase 3) are placeholders.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -119,8 +134,11 @@ private fun AppHeader() {
 }
 
 @Composable
-private fun AddressBar() {
+private fun AddressBar(tabCount: Int, onNavigate: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    val focusManager = LocalFocusManager.current
+    var text by remember { mutableStateOf("") }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -132,27 +150,59 @@ private fun AddressBar() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = Icons.Filled.Lock,
+            imageVector = Icons.Filled.Search,
             contentDescription = null,
             tint = colors.primary,
             modifier = Modifier.size(13.dp)
         )
         Spacer(Modifier.width(7.dp))
-        Text(
-            text = "kitaabcha.blogspot.com",
-            color = colors.onSurface,
-            fontSize = 13.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
+        BasicTextField(
+            value = text,
+            onValueChange = { text = it },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            textStyle = TextStyle(color = colors.onSurface, fontSize = 13.sp),
+            cursorBrush = SolidColor(colors.primary),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Go,
+                autoCorrectEnabled = false
+            ),
+            keyboardActions = KeyboardActions(
+                onGo = {
+                    if (text.isNotBlank()) {
+                        onNavigate(text)
+                        text = ""
+                        focusManager.clearFocus()
+                    }
+                }
+            ),
+            decorationBox = { innerField ->
+                Box {
+                    if (text.isEmpty()) {
+                        Text(
+                            text = "Search or type a URL",
+                            color = palette.muted,
+                            fontSize = 13.sp
+                        )
+                    }
+                    innerField()
+                }
+            }
         )
+        Spacer(Modifier.width(7.dp))
         Box(
             modifier = Modifier
                 .size(24.dp)
-                .border(1.5.dp, LocalYpnPalette.current.muted, RoundedCornerShape(8.dp)),
+                .border(1.5.dp, palette.muted, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Text(text = "3", color = colors.onSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = tabCount.toString(),
+                color = colors.onSurface,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -342,13 +392,13 @@ private fun LegendItem(color: androidx.compose.ui.graphics.Color, label: String)
 }
 
 @Composable
-private fun QuickTiles() {
+private fun QuickTiles(onNavigate: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val tiles = listOf(
-        "▶" to "YouTube",
-        "M" to "mrjobs.top",
-        "K" to "Kitaabcha",
-        "W" to "Wikipedia"
+        Triple("▶", "YouTube", "https://www.youtube.com"),
+        Triple("M", "mrjobs.top", "https://mrjobs.top"),
+        Triple("K", "Kitaabcha", "https://kitaabcha.blogspot.com"),
+        Triple("W", "Wikipedia", "https://www.wikipedia.org")
     )
     Row(
         modifier = Modifier
@@ -356,9 +406,11 @@ private fun QuickTiles() {
             .padding(start = 12.dp, end = 12.dp, top = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(9.dp)
     ) {
-        tiles.forEach { (glyph, label) ->
+        tiles.forEach { (glyph, label, url) ->
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onNavigate(url) },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -388,7 +440,7 @@ private fun QuickTiles() {
 }
 
 @Composable
-private fun ThemePicker(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
+fun ThemePicker(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
     Text(

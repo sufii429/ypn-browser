@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 0.1.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 0.2.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## Themes
@@ -24,15 +24,24 @@ phone (SharedPreferences) and re-skins the whole app instantly.
 
 ## Phase plan
 
-- **Phase 0 — skeleton (this build).** Gradle project, theme system,
+- **Phase 0 — skeleton (done).** Gradle project, theme system,
   and a static home screen ported from the mockups: VPN status card
   (ON · Japan · Tokyo · TCP 443 · Disconnect), dual-network download
   card with the split Wi-Fi/Data bar and combined-speed line,
   quick-access tiles, bottom navigation with a Downloads badge.
   Everything on screen is a placeholder sample — no browser engine,
   no VPN, no downloads yet.
-- **Phase 1 — browser core.** WebView with tabs, address/search bar,
-  bookmarks, history, desktop mode, dark mode, pop-up blocking.
+- **Phase 1 — browser core (done).** A real WebView browser: tabs
+  (one WebView per tab, created lazily, destroyed on close) with a
+  tab-list screen; address bar that opens URLs or runs a Google
+  search; bookmarks (star in the toolbar, list in Menu) and history
+  (recorded automatically, clear-all in Menu) — both persisted on the
+  phone; a global Desktop mode toggle (desktop user-agent, persisted);
+  pop-up blocking (no multiple windows, JS windows refused); loading
+  progress bar; system Back walks page history first. Home screen
+  search bar and quick tiles browse for real, and its tab count is
+  live. File downloads just toast "Downloads arrive in Phase 3" for
+  now.
 - **Phase 2 — built-in VPN.** Free **VPN Gate** servers over
   **MS-SSTP** (genuine TLS on TCP 443). Decided by Mazeen's 2026-11-03
   phone tests on mobile data: WireGuard is UDP-blocked by his carrier
