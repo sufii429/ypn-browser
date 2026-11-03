@@ -23,11 +23,13 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import app.ypn.browser.browser.BrowserController
@@ -55,6 +57,10 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * Downloads section is the real download manager, fed by the
  * process-wide DownloadController singleton (shared with the download
  * foreground service), and the Downloads badge counts live downloads.
+ * Since Phase 4 the first tab's WebView is pre-warmed at first
+ * composition (see [BrowserController.warmUp]), Home no longer
+ * carries the theme picker (Menu is the single settings home), and
+ * VPN quick-connect prefers a server remembered as working.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -65,6 +71,15 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     var selected by remember { mutableStateOf(YpnSection.HOME) }
     var showVpn by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
+
+    // Phase 4 pre-warm: build the first tab's WebView (and with it
+    // Chromium's one-time initialization) while Home is still on
+    // screen, so the first navigation never pays the cold-start cost
+    // or shows a blank screen.
+    val webViewSurface = colors.surface.toArgb()
+    LaunchedEffect(Unit) {
+        controller.warmUp(context, webViewSurface)
+    }
 
     // VPN consent: VpnController.requestConnect returns the system's
     // consent intent when approval is still needed; on approval we
@@ -162,8 +177,6 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                         )
                     } else {
                         HomeScreen(
-                            themeId = themeId,
-                            onThemeChange = onThemeChange,
                             tabCount = controller.tabs.size,
                             onNavigate = { controller.openInNewTab(it) },
                             vpn = vpn,

@@ -46,7 +46,9 @@ import java.util.Locale
  * Phase 2 VPN screen: live status of the embedded SSTP tunnel plus the
  * VPN Gate relay list (best first, by VPN Gate score). Tapping a server
  * connects to it via [onConnectRequest] (the shell owns the Android
- * VPN-consent launcher).
+ * VPN-consent launcher). Since Phase 4, servers that have connected
+ * successfully before are listed first under "Worked before" and carry
+ * a "✓ worked" marker in the full list.
  */
 @Composable
 fun VpnScreen(
@@ -119,15 +121,14 @@ fun VpnScreen(
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
         )
 
-        Text(
-            text = "Servers · best first",
-            color = colors.onBackground,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
-        )
-
         if (vpn.servers.isEmpty()) {
+            Text(
+                text = "Servers · best first",
+                color = colors.onBackground,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
+            )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,25 +146,61 @@ fun VpnScreen(
                 )
             }
         } else {
+            val worked = vpn.workedServers
             LazyColumn(Modifier.fillMaxSize()) {
+                if (worked.isNotEmpty()) {
+                    item(key = "worked-header") {
+                        ServerSectionHeader("Worked before")
+                    }
+                    items(worked, key = { "worked-" + it.sstpHost }) { server ->
+                        ServerRow(
+                            server = server,
+                            workedHere = true,
+                            connectedHere = vpn.phase == VpnPhase.ON &&
+                                vpn.currentServer?.sstpHost == server.sstpHost,
+                            onClick = { onConnectRequest(server) }
+                        )
+                        ServerDivider()
+                    }
+                }
+                item(key = "all-header") {
+                    ServerSectionHeader("Servers · best first")
+                }
                 items(vpn.servers, key = { it.sstpHost }) { server ->
                     ServerRow(
                         server = server,
+                        workedHere = server.sstpHost in vpn.workedHosts,
                         connectedHere = vpn.phase == VpnPhase.ON &&
                             vpn.currentServer?.sstpHost == server.sstpHost,
                         onClick = { onConnectRequest(server) }
                     )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp)
-                            .height(1.dp)
-                            .background(colors.outline)
-                    )
+                    ServerDivider()
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ServerSectionHeader(text: String) {
+    Text(
+        text = text,
+        color = MaterialTheme.colorScheme.onBackground,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun ServerDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp)
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outline)
+    )
 }
 
 @Composable
@@ -231,7 +268,7 @@ private fun VpnStatusCard(
                 }
                 VpnPhase.OFF, VpnPhase.FAILED -> OutlinedButton(
                     onClick = {
-                        val target = vpn.currentServer ?: vpn.servers.firstOrNull()
+                        val target = vpn.quickConnectTarget()
                         if (target != null) onConnectRequest(target)
                     },
                     enabled = vpn.servers.isNotEmpty() || vpn.currentServer != null,
@@ -256,6 +293,7 @@ private fun VpnStatusCard(
 @Composable
 private fun ServerRow(
     server: VpnServer,
+    workedHere: Boolean,
     connectedHere: Boolean,
     onClick: () -> Unit
 ) {
@@ -298,6 +336,14 @@ private fun ServerRow(
                 color = palette.muted,
                 fontSize = 10.sp
             )
+            if (workedHere) {
+                Text(
+                    text = "✓ worked",
+                    color = palette.data,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
         if (connectedHere) {
             Spacer(Modifier.width(8.dp))

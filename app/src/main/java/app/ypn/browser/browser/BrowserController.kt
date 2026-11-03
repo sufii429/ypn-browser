@@ -9,6 +9,7 @@ import android.os.Message
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -31,6 +32,15 @@ class BrowserTab(val id: Int) {
     var canGoBack by mutableStateOf(false)
     var canGoForward by mutableStateOf(false)
 
+    /**
+     * True once this tab's first page has actually committed (painted
+     * something). Until then the browser screen covers the still-blank
+     * WebView with its loading UI (Phase 4 — the old first-navigation
+     * "black screen"). Stays true for later navigations, which keep
+     * using the toolbar progress line.
+     */
+    var committed by mutableStateOf(false)
+
     /** URL the WebView still has to load once it exists. */
     var pendingUrl: String? = null
 
@@ -38,11 +48,12 @@ class BrowserTab(val id: Int) {
 }
 
 /**
- * Owns all browser state for the app shell: the tab list, one lazily
- * created WebView per tab (kept in a map, destroyed when its tab
- * closes), bookmarks, history and the global desktop-mode flag.
- * Everything Compose reads is snapshot state, so the UI stays in sync
- * with WebView callbacks.
+ * Owns all browser state for the app shell: the tab list, one WebView
+ * per tab (kept in a map, destroyed when its tab closes — the first
+ * tab's WebView is pre-warmed at app start since Phase 4, the rest
+ * are created lazily), bookmarks, history and the global desktop-mode
+ * flag. Everything Compose reads is snapshot state, so the UI stays
+ * in sync with WebView callbacks.
  */
 class BrowserController(context: Context, private val downloads: DownloadController) {
 
@@ -87,7 +98,20 @@ class BrowserController(context: Context, private val downloads: DownloadControl
     fun openInNewTab(raw: String) {
         val url = resolveInput(raw)
         if (url.isEmpty()) return
-        newTab(url)
+        val active = activeTab
+        if (active != null && active.currentUrl.isEmpty()) {
+            // The active tab is still untouched (e.g. the pre-warmed
+            // first tab): navigate it instead of stacking an empty tab
+            // beside the page the user actually asked for.
+            active.pendingUrl = url
+            active.currentUrl = url
+            webViews[active.id]?.let {
+                it.loadUrl(url)
+                active.pendingUrl = null
+            }
+        } else {
+            newTab(url)
+        }
         browsing = true
     }
 
@@ -152,6 +176,8 @@ class BrowserController(context: Context, private val downloads: DownloadControl
         activeTab?.let { tab ->
             webViews[tab.id]?.stopLoading()
             tab.progress = 100
+            // Whatever partial page exists replaces the loading cover.
+            tab.committed = true
         }
     }
 
@@ -213,16 +239,35 @@ class BrowserController(context: Context, private val downloads: DownloadControl
     // ---------- WebView lifecycle ----------
 
     /**
+     * Phase 4 pre-warm: create the first tab and its WebView right
+     * away (the app shell calls this on first composition, while the
+     * Home screen is still showing) so Chromium's slow one-time
+     * initialization is already done when the user first navigates.
+     * The WebView created here IS the first tab's real WebView —
+     * [obtainWebView] hands it back when the browser screen composes —
+     * and it is destroyed with its tab like any other. Additional tabs
+     * keep the lazy creation below. No-op once any tab exists.
+     */
+    fun warmUp(context: Context, backgroundColor: Int) {
+        if (tabs.isNotEmpty()) return
+        val tab = newTab(null)
+        obtainWebView(context, tab, backgroundColor)
+    }
+
+    /**
      * Returns the tab's WebView, creating it (with all settings and
      * clients) on first use. Called from the browser screen's
      * AndroidView factory, so [context] is the Activity context.
+     * [backgroundColor] (the theme surface colour) is painted behind
+     * the page so a loading WebView never flashes black or white.
      */
-    fun obtainWebView(context: Context, tab: BrowserTab): WebView {
+    fun obtainWebView(context: Context, tab: BrowserTab, backgroundColor: Int): WebView {
         webViews[tab.id]?.let { existing ->
+            existing.setBackgroundColor(backgroundColor)
             (existing.parent as? ViewGroup)?.removeView(existing)
             return existing
         }
-        val wv = createWebView(context, tab)
+        val wv = createWebView(context, tab, backgroundColor)
         webViews[tab.id] = wv
         val toLoad = tab.pendingUrl ?: tab.currentUrl.takeIf { it.isNotEmpty() }
         if (toLoad != null) {
@@ -240,8 +285,11 @@ class BrowserController(context: Context, private val downloads: DownloadControl
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(context: Context, tab: BrowserTab): WebView {
+    private fun createWebView(context: Context, tab: BrowserTab, backgroundColor: Int): WebView {
         val wv = WebView(context)
+        // Theme surface behind the page: no black/white flash while
+        // the first paint is still on its way (Phase 4).
+        wv.setBackgroundColor(backgroundColor)
         wv.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -262,10 +310,29 @@ class BrowserController(context: Context, private val downloads: DownloadControl
                 tab.canGoForward = view?.canGoForward() == true
             }
 
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                // First paint: the browser screen's loading cover can
+                // go away — something is actually on screen now.
+                tab.committed = true
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                // A failed first load still replaces the blank view
+                // (with WebView's error page) — drop the cover too.
+                if (request?.isForMainFrame == true) tab.committed = true
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (url != null) tab.currentUrl = url
                 view?.title?.takeIf { it.isNotBlank() }?.let { tab.title = it }
                 tab.progress = 100
+                // Fallback for pages where the commit-visible callback
+                // is late or never delivered.
+                tab.committed = true
                 tab.canGoBack = view?.canGoBack() == true
                 tab.canGoForward = view?.canGoForward() == true
                 recordHistory(tab)

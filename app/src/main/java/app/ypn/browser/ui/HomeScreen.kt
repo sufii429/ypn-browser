@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,8 +24,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -61,7 +60,6 @@ import app.ypn.browser.download.DownloadStatus
 import app.ypn.browser.download.formatBytes
 import app.ypn.browser.download.formatMbps
 import app.ypn.browser.ui.theme.LocalYpnPalette
-import app.ypn.browser.ui.theme.YpnThemeId
 import app.ypn.browser.vpn.VpnController
 import app.ypn.browser.vpn.VpnPhase
 import app.ypn.browser.vpn.VpnServer
@@ -72,16 +70,15 @@ import app.ypn.browser.vpn.VpnServer
  * quick tiles really browse (via [onNavigate]) and the tab count is
  * live; since Phase 2 the VPN card shows the real SSTP tunnel state
  * (via [vpn]) — tapping it opens the VPN screen ([onVpnOpen]), its
- * button connects / disconnects (via [onVpnConnectRequest]). Since
+ * button connects / disconnects (via [onVpnConnectRequest]); since
  * Phase 3 the download card mirrors the top active download from
- * [downloads] with its measured per-network data, and collapses to a
- * slim "No active downloads" card otherwise. Theme switching
- * re-skins the whole screen via YpnBrowserTheme.
+ * [downloads] with its measured per-network data. Phase 4 slimmed
+ * this screen to the approved map: address bar, the compact VPN
+ * card, the download card ONLY while a download is active, and the
+ * quick tiles — the theme picker lives in the Menu now.
  */
 @Composable
 fun HomeScreen(
-    themeId: YpnThemeId,
-    onThemeChange: (YpnThemeId) -> Unit,
     tabCount: Int,
     onNavigate: (String) -> Unit,
     vpn: VpnController,
@@ -103,9 +100,8 @@ fun HomeScreen(
         VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
         DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
         QuickTiles(onNavigate = onNavigate)
-        ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
         Text(
-            text = "Phase 3 — browsing, the built-in VPN and downloads with dual-network acceleration are live.",
+            text = "YPN Browser 1.0 — browsing, built-in VPN and dual-network downloads.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -248,32 +244,20 @@ private fun VpnCard(
         VpnPhase.FAILED -> "VPN FAILED"
         VpnPhase.OFF -> "VPN OFF"
     }
-    val headline = when {
-        phase == VpnPhase.OFF -> "Not connected"
-        server != null -> server.countryLong.ifBlank { server.sstpHost }
-        else -> "VPN Gate"
-    }
-    val subline = when (phase) {
-        VpnPhase.ON -> buildAnnotatedString {
-            append("VPN Gate server · ")
-            withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Bold)) {
-                append("TCP 443")
+    // Phase 4 compact card: one slim server/status line under the
+    // header row — the connected server when ON, the live status text
+    // while connecting or after a failure, nothing when OFF.
+    val serverLine: String? = when (phase) {
+        VpnPhase.ON -> server?.let { s ->
+            buildString {
+                append(s.countryLong.ifBlank { s.sstpHost })
+                append(" · TCP 443")
+                vpn.assignedIp?.let { append(" · $it") }
             }
-            vpn.assignedIp?.let { append(" · $it") }
         }
-        VpnPhase.CONNECTING -> buildAnnotatedString {
-            append(vpn.statusText.ifBlank { "Connecting…" })
-        }
-        VpnPhase.FAILED -> buildAnnotatedString {
-            append(vpn.statusText.ifBlank { "Connection failed — tap to retry" })
-        }
-        VpnPhase.OFF -> buildAnnotatedString {
-            append("VPN Gate server · ")
-            withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Bold)) {
-                append("TCP 443")
-            }
-            append(" · MS-SSTP")
-        }
+        VpnPhase.CONNECTING -> vpn.statusText.ifBlank { "Connecting…" }
+        VpnPhase.FAILED -> vpn.statusText.ifBlank { "Connection failed — tap Connect to retry" }
+        VpnPhase.OFF -> null
     }
 
     Card(
@@ -285,7 +269,7 @@ private fun VpnCard(
         colors = CardDefaults.cardColors(containerColor = colors.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -310,30 +294,30 @@ private fun VpnCard(
                     letterSpacing = 0.8.sp
                 )
                 Spacer(Modifier.weight(1f))
-                Text(text = server?.flagEmoji ?: "🌐", fontSize = 16.sp)
+                if (phase == VpnPhase.ON) {
+                    Text(text = server?.flagEmoji ?: "🌐", fontSize = 15.sp)
+                }
             }
-            Text(
-                text = headline,
-                color = colors.onSurface,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 7.dp)
-            )
-            Text(
-                text = subline,
-                color = palette.muted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 2.dp)
-            )
+            if (serverLine != null) {
+                Text(
+                    text = serverLine,
+                    color = palette.muted,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 5.dp)
+                )
+            }
             when (phase) {
                 VpnPhase.ON, VpnPhase.CONNECTING -> OutlinedButton(
                     onClick = { vpn.disconnect() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 11.dp),
+                        .padding(top = 9.dp),
                     shape = RoundedCornerShape(11.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary)
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary),
+                    contentPadding = PaddingValues(vertical = 5.dp)
                 ) {
                     Text(
                         text = if (phase == VpnPhase.ON) "Disconnect" else "Cancel",
@@ -343,15 +327,18 @@ private fun VpnCard(
                 }
                 VpnPhase.OFF, VpnPhase.FAILED -> OutlinedButton(
                     onClick = {
-                        val target = vpn.currentServer ?: vpn.servers.firstOrNull()
+                        // Quick Connect prefers a remembered working
+                        // server, then the best score (Phase 4).
+                        val target = vpn.quickConnectTarget()
                         if (target != null) onConnectRequest(target) else onOpen()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 11.dp),
+                        .padding(top = 9.dp),
                     shape = RoundedCornerShape(11.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
-                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary)
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, colors.primary),
+                    contentPadding = PaddingValues(vertical = 5.dp)
                 ) {
                     Text(text = "Connect", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
@@ -367,46 +354,9 @@ private fun DownloadCard(
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
-    val item = downloads.topActive
-
-    if (item == null) {
-        // Nothing in flight: a slim card that taps through to Downloads.
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, top = 12.dp)
-                .clickable { onOpenDownloads() },
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = colors.surface),
-            border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Download,
-                    contentDescription = null,
-                    tint = colors.primary,
-                    modifier = Modifier.size(17.dp)
-                )
-                Spacer(Modifier.width(9.dp))
-                Text(
-                    text = "No active downloads",
-                    color = colors.onSurface,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = "Downloads",
-                    color = palette.muted,
-                    fontSize = 11.sp
-                )
-            }
-        }
-        return
-    }
+    // Phase 4 map: with nothing in flight there is NO download card on
+    // Home at all — Downloads is one tap away in the bottom navigation.
+    val item = downloads.topActive ?: return
 
     // The mockup layout, fed with the top download's measured data.
     val downloading = item.status == DownloadStatus.DOWNLOADING
@@ -625,79 +575,6 @@ private fun QuickTiles(onNavigate: (String) -> Unit) {
                     fontSize = 10.sp,
                     modifier = Modifier.padding(top = 5.dp)
                 )
-            }
-        }
-    }
-}
-
-@Composable
-fun ThemePicker(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val palette = LocalYpnPalette.current
-    Text(
-        text = "Theme",
-        color = colors.onBackground,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp)
-    )
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
-    ) {
-        Column {
-            YpnThemeId.entries.forEachIndexed { index, entry ->
-                val selected = entry == themeId
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onThemeChange(entry) }
-                        .padding(horizontal = 14.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(if (selected) colors.primary else palette.surface2),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = entry.letter,
-                            color = if (selected) palette.onAccent else colors.onSurface,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = entry.label,
-                        color = colors.onSurface,
-                        fontSize = 13.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (selected) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected",
-                            tint = colors.primary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-                if (index < YpnThemeId.entries.lastIndex) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(colors.outline)
-                    )
-                }
             }
         }
     }

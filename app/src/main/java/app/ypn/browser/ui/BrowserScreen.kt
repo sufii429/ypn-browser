@@ -1,5 +1,6 @@
 package app.ypn.browser.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -40,10 +42,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -54,7 +59,10 @@ import app.ypn.browser.ui.theme.LocalYpnPalette
 /**
  * The real browsing view (Phase 1): toolbar (back / forward / address
  * bar / reload-stop / bookmark star / home), a loading progress line,
- * and the active tab's WebView underneath.
+ * and the active tab's WebView underneath. Since Phase 4 the WebView
+ * is painted over the theme surface colour, and until a tab's first
+ * page commits, [InitialLoadOverlay] covers it with a real loading
+ * state instead of a blank black screen.
  */
 @Composable
 fun BrowserScreen(
@@ -63,6 +71,7 @@ fun BrowserScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
+    val surfaceArgb = colors.surface.toArgb()
     val tab = controller.activeTab
 
     Column(
@@ -93,10 +102,68 @@ fun BrowserScreen(
                 // WebView itself alive across tab switches.
                 key(tab.id) {
                     AndroidView(
-                        factory = { ctx -> controller.obtainWebView(ctx, tab) },
+                        factory = { ctx -> controller.obtainWebView(ctx, tab, surfaceArgb) },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+                if (!tab.committed) {
+                    // The tab's first page has not painted anything
+                    // yet: show where it is going and how far it got
+                    // instead of the still-blank WebView.
+                    InitialLoadOverlay(url = tab.currentUrl, progress = tab.progress)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * First-load cover for a tab (Phase 4): shown over the theme surface
+ * until the tab's first page commits, so a cold WebView never looks
+ * like a dead black screen. [progress] is the tab's real load
+ * progress (WebChromeClient), shown as a bar once it starts moving.
+ */
+@Composable
+private fun InitialLoadOverlay(url: String, progress: Int) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    val host = remember(url) {
+        Uri.parse(url).host?.takeIf { it.isNotBlank() } ?: url
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.surface),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = colors.primary)
+            Text(
+                text = "Loading $host…",
+                color = colors.onSurface,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp)
+            )
+            Text(
+                text = url,
+                color = palette.muted,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 3.dp)
+            )
+            if (progress > 0) {
+                LinearProgressIndicator(
+                    progress = { progress / 100f },
+                    modifier = Modifier
+                        .width(180.dp)
+                        .padding(top = 14.dp),
+                    color = colors.primary,
+                    trackColor = palette.surface2
+                )
             }
         }
     }

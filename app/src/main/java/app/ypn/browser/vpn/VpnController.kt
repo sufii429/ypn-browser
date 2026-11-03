@@ -72,6 +72,11 @@ enum class VpnPhase { OFF, CONNECTING, ON, FAILED }
  * (ROOT_STATE flips false without the user asking), this controller
  * waits a beat and starts the next server from the sorted list, until
  * the attempt cap is hit.
+ *
+ * Since Phase 4 the controller also remembers which servers have ever
+ * reached ON ([workedHosts], persisted): the VPN screen lists them
+ * first and [quickConnectTarget] prefers them over the raw score
+ * order.
  */
 class VpnController(context: Context) {
 
@@ -93,6 +98,16 @@ class VpnController(context: Context) {
     var servers by mutableStateOf<List<VpnServer>>(emptyList())
         private set
     var refreshing by mutableStateOf(false)
+        private set
+
+    /**
+     * SSTP hostnames that have reached the ON state at least once on
+     * this phone ("worked before"), persisted in the app preferences
+     * (Phase 4). The VPN screen lists these first and Quick Connect
+     * prefers them: many VPN Gate relays never answer SSTP at all, so
+     * a remembered working relay is worth more than a fresh score.
+     */
+    var workedHosts by mutableStateOf<Set<String>>(emptySet())
         private set
 
     private var userRequestedStop = true
@@ -118,6 +133,8 @@ class VpnController(context: Context) {
 
     init {
         servers = loadCachedServers()
+        workedHosts = storePrefs.getStringSet(KEY_WORKED_HOSTS, emptySet())
+            ?.toSet() ?: emptySet()
         // If a tunnel is already up (the service outlives this UI), show
         // its server. Failover stays disarmed for such inherited
         // sessions: if it drops, we just go OFF.
@@ -256,6 +273,16 @@ class VpnController(context: Context) {
             wasConnected = true
             assignedIp = parseAssignedIp(summary)
             phase = VpnPhase.ON
+            // The tunnel is up: remember this server as one that
+            // works on this phone (Phase 4).
+            currentServer?.sstpHost?.let { host ->
+                if (host !in workedHosts) {
+                    workedHosts = workedHosts + host
+                    storePrefs.edit()
+                        .putStringSet(KEY_WORKED_HOSTS, workedHosts)
+                        .apply()
+                }
+            }
             statusText = assignedIp?.let { "Tunnel up · your VPN address is $it" }
                 ?: "Tunnel up"
             watchdogJob?.cancel()
@@ -295,6 +322,19 @@ class VpnController(context: Context) {
             wasConnected = false
         }
     }
+
+    /** Remembered working servers that are in the current list. */
+    val workedServers: List<VpnServer>
+        get() = servers.filter { it.sstpHost in workedHosts }
+
+    /**
+     * What a plain "Connect" tap dials: the current server if there
+     * is one, else a remembered working server present in the list,
+     * else the best-scored server (the list is kept score-sorted).
+     * Failover from there behaves exactly as before.
+     */
+    fun quickConnectTarget(): VpnServer? =
+        currentServer ?: workedServers.firstOrNull() ?: servers.firstOrNull()
 
     /** Pull the "[Assigned IP Address]" entry out of OSC's status text. */
     private fun parseAssignedIp(summary: String): String? {
@@ -416,5 +456,6 @@ class VpnController(context: Context) {
         const val FAILOVER_DELAY_MS = 2_000L
         const val KEY_SERVERS_CACHE = "vpn_gate_servers"
         const val KEY_LAST_HOST = "vpn_last_host"
+        const val KEY_WORKED_HOSTS = "vpn_worked_hosts"
     }
 }

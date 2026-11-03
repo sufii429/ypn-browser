@@ -6,8 +6,54 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 0.4.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
+
+## v1 — complete
+
+YPN Browser 1.0 is the finished v1, all of it verified on Mazeen's
+phone (the one outstanding check is the dual-network split test,
+which needs a day when his home Wi-Fi is back):
+
+- **Browser + themes:** tabbed WebView browsing (the first tab's
+  WebView is pre-warmed at app start, and a tab's first load shows a
+  real loading state — no more blank black screen), address bar with
+  URL/search resolution, bookmarks and history, global Desktop mode,
+  pop-up blocking, and the four mockup themes — selectable in the
+  Menu, which is the single settings home.
+- **Built-in VPN:** free VPN Gate relays over MS-SSTP (genuine TLS,
+  TCP 443) via the embedded Open SSTP Client core, with the public
+  `vpn` / `vpn` login, a pinned DNS resolver (1.1.1.1, carried inside
+  the tunnel) for relays that push no DNS, two-layer failover
+  (same-server retries, then the next servers), and a memory of
+  servers that have worked before — listed first and preferred by
+  Quick Connect.
+- **Downloads:** a chunked download manager (pause/resume that
+  survives restarts) plus the signature dual-network accelerator —
+  one file pulled over Wi-Fi and mobile data at the same time, with
+  per-network bytes measured and shown. A Menu toggle turns the
+  accelerator off.
+- **Install & updates:** every build is signed with the project's
+  permanent debug keystore, so new builds install straight over the
+  old one and app data survives. The latest build is always at the
+  permanent link:
+  https://github.com/sufii429/ypn-browser/releases/download/build-latest/ypn-browser.apk
+
+**Known limits (honest ones):**
+
+- Some VPN Gate relays don't offer MS-SSTP at all, or are offline —
+  the public server list carries no SSTP flag, so a dead relay is
+  only discovered by trying it. Failover and the worked-server
+  memory are the mitigations.
+- Servers that don't accept HTTP ranges make downloads
+  single-stream, and there resume restarts the file from the
+  beginning.
+- Accelerated downloads travel outside the VPN tunnel **by design**
+  (their sockets bind to the physical networks); browsing stays in
+  the tunnel. Accelerated downloads also consume mobile data.
+- VPN Gate is run by volunteers whose stated logging policy is
+  about two weeks — fine for casual browsing and unblocking, not
+  for banking or other sensitive accounts.
 
 ## Themes
 
@@ -32,7 +78,8 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   Everything on screen is a placeholder sample — no browser engine,
   no VPN, no downloads yet.
 - **Phase 1 — browser core (done).** A real WebView browser: tabs
-  (one WebView per tab, created lazily, destroyed on close) with a
+  (one WebView per tab — the first pre-warmed at app start since
+  Phase 4, the rest created lazily — destroyed on close) with a
   tab-list screen; address bar that opens URLs or runs a Google
   search; bookmarks (star in the toolbar, list in Menu) and history
   (recorded automatically, clear-all in Menu) — both persisted on the
@@ -83,8 +130,16 @@ phone (SharedPreferences) and re-skins the whole app instantly.
   use the default route like everything else. If only one network is
   available, downloads simply run on it and the UI says so. Note the
   toggle's flip side: accelerated downloads consume mobile data.
-- **Phase 4 — polish & release.** GitHub Actions build, release APK,
-  on-phone verification.
+- **Phase 4 — polish & release (done; v1.0.0).** The first-navigation
+  blank-screen fix (first tab's WebView pre-warmed at app start,
+  theme-surface background behind every page, and a loading overlay
+  with the target host and real progress until the first page
+  commits); the user-approved placement map (Home slimmed to address
+  bar + compact VPN card + active-download card only while one runs
+  + quick tiles; themes and settings live only in the Menu);
+  worked-server memory for the VPN (servers that reached ON are
+  remembered, listed first with a "✓ worked" marker, and preferred
+  by Quick Connect); and the version-1.0.0 release itself.
 
 ## Third-party components
 

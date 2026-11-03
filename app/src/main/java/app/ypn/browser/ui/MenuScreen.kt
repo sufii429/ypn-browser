@@ -14,12 +14,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -31,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,9 +48,10 @@ import app.ypn.browser.ui.theme.YpnThemeId
 private enum class MenuPage { ROOT, BOOKMARKS, HISTORY }
 
 /**
- * The real Menu (Phase 1): Bookmarks, History, the global Desktop mode
- * toggle, and the theme picker (shared with the Home screen). Since
- * Phase 3 it also holds the dual-network acceleration toggle.
+ * The Menu — since Phase 4 the app's single settings home: Bookmarks,
+ * History, the global Desktop mode toggle, the dual-network
+ * acceleration toggle (Phase 3), and the theme picker, which lives
+ * ONLY here now (it used to also sit on the Home screen).
  */
 @Composable
 fun MenuScreen(
@@ -196,7 +202,7 @@ private fun MenuRoot(
         ThemePicker(themeId = themeId, onThemeChange = onThemeChange)
 
         Text(
-            text = "Browsing, the built-in VPN and downloads are all live (Phases 1–3).",
+            text = "YPN Browser 1.0 — settings and themes live here, nowhere else.",
             color = palette.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -246,4 +252,81 @@ private fun MenuDivider() {
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outline)
     )
+}
+
+/**
+ * The theme picker — since Phase 4 this is its only home in the app
+ * (the Menu). One row per theme, the current one checked.
+ */
+@Composable
+fun ThemePicker(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Text(
+        text = "Theme",
+        color = colors.onBackground,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp)
+    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
+    ) {
+        Column {
+            YpnThemeId.entries.forEachIndexed { index, entry ->
+                val selected = entry == themeId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onThemeChange(entry) }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (selected) colors.primary else palette.surface2),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = entry.letter,
+                            color = if (selected) palette.onAccent else colors.onSurface,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = entry.label,
+                        color = colors.onSurface,
+                        fontSize = 13.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Selected",
+                            tint = colors.primary,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+                if (index < YpnThemeId.entries.lastIndex) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(colors.outline)
+                    )
+                }
+            }
+        }
+    }
 }
