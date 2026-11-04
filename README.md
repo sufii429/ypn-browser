@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -64,6 +64,18 @@ if no network path makes progress for two minutes. The Downloads
 screen also shows which network paths the app can see ("Paths —
 Wi-Fi: ready · Mobile data: ready") while an accelerated download
 is active.
+
+**1.0.2:** the network pool no longer depends on the system's
+requestNetwork callbacks, which on Mazeen's phone delivered nothing
+at all for a whole download (both paths showed "not found" while
+traffic flowed over the default Wi-Fi route). Handles are now also
+discovered from the phone's live network list — once when a download
+starts and again every second while it runs — so dual-network
+engages even when the callbacks never deliver, a lost handle is
+only given up when no equivalent network exists, and an unbalanced
+pool release can no longer tear down a live registration. When the
+phone rejects a network request, the Paths line now reports that
+error instead of staying silent.
 
 ## Themes
 

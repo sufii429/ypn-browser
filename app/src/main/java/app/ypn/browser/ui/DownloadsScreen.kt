@@ -338,8 +338,9 @@ private fun SplitBar(item: DownloadItem) {
 private fun PathStatusLine(downloads: DownloadController) {
     val wifi = if (downloads.wifiPathUp) "Wi-Fi: ready" else "Wi-Fi: not found"
     val cell = if (downloads.cellPathUp) "Mobile data: ready" else "Mobile data: not found"
+    val note = downloads.poolNote
     Text(
-        text = "Paths — $wifi · $cell",
+        text = "Paths — $wifi · $cell" + (note?.let { " · $it" } ?: ""),
         color = LocalYpnPalette.current.muted,
         fontSize = 11.sp,
         modifier = Modifier.padding(start = 4.dp, top = 8.dp)

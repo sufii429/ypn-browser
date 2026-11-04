@@ -84,6 +84,10 @@ class DownloadController private constructor(context: Context) {
     var cellPathUp by mutableStateOf(false)
         private set
 
+    /** The pool's last requestNetwork error, if any — shown on the Paths line. */
+    val poolNote: String?
+        get() = pool.lastRequestError
+
     init {
         accelerationEnabled = store.acceleratorEnabled
         val dir = downloadsDir()
@@ -694,8 +698,15 @@ class DownloadController private constructor(context: Context) {
         item.error = null
     }
 
-    /** Mirror the pool's live handles into Compose state for the UI. */
+    /**
+     * Mirror the pool's live handles into Compose state for the UI.
+     * Reseeds first: the pool's requestNetwork callbacks are not
+     * guaranteed to deliver on every phone, so each refresh also
+     * re-discovers handles from the live network list — a missing
+     * handle shows up within one sampler tick (~1 s).
+     */
     private fun refreshPathState() {
+        pool.reseed()
         wifiPathUp = pool.wifiNetwork != null
         cellPathUp = pool.cellNetwork != null
     }
