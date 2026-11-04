@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Network
 import android.os.Environment
 import android.webkit.MimeTypeMap
-import android.webkit.URLUtil
 import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -27,6 +26,7 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -164,7 +164,7 @@ class DownloadController private constructor(context: Context) {
     ) {
         enqueue(
             url = url,
-            suggestedName = URLUtil.guessFileName(url, contentDisposition, mimeType),
+            suggestedName = deriveFileName(url, contentDisposition),
             mimeType = mimeType,
             userAgent = userAgent,
             cookie = cookie
@@ -176,7 +176,7 @@ class DownloadController private constructor(context: Context) {
         val url = normalizeDownloadUrl(raw) ?: return false
         enqueue(
             url = url,
-            suggestedName = URLUtil.guessFileName(url, null, null),
+            suggestedName = deriveFileName(url, null),
             mimeType = null,
             userAgent = null,
             cookie = null
@@ -216,6 +216,46 @@ class DownloadController private constructor(context: Context) {
             labels.all { it.isNotEmpty() } && labels.last().length >= 2
         return if (looksLikeHost) "https://$input" else null
     }
+
+    /**
+     * A download's name from the two places that actually know it:
+     * the Content-Disposition header, then the URL path. Deliberately
+     * NOT URLUtil.guessFileName — that helper replaces the name's
+     * extension with one derived from the server's Content-Type, so
+     * a generic host answering application/octet-stream renames a
+     * real "movie.mkv" to "movie.bin". Here a name that already
+     * carries an extension keeps it, whatever the MIME type claims;
+     * [sanitizeFileName] only appends a MIME extension when the
+     * resulting name has no dot at all. Blank when neither source
+     * yields a name (sanitizeFileName turns that into "download").
+     */
+    private fun deriveFileName(url: String, contentDisposition: String?): String {
+        val headerName = contentDisposition?.let { disposition ->
+            // RFC 5987 form first: filename*=UTF-8''movie%20name.mkv —
+            // the (percent-encoded) value follows the second quote.
+            val star = Regex(
+                """filename\*\s*=\s*[^']*'[^']*'([^;]+)""",
+                RegexOption.IGNORE_CASE
+            ).find(disposition)?.groupValues?.get(1)
+            val raw = star ?: Regex(
+                """filename\s*=\s*"?([^";]+)"?""",
+                RegexOption.IGNORE_CASE
+            ).find(disposition)?.groupValues?.get(1)
+            raw?.trim()?.takeIf { it.isNotBlank() }?.let { decodeFileName(it) }
+        }
+        if (!headerName.isNullOrBlank()) return headerName
+        val segment = url.substringBefore('?').substringBefore('#')
+            .substringAfterLast('/').trim()
+        return if (segment.isBlank()) "" else decodeFileName(segment)
+    }
+
+    /** Percent-decoding for file names; a malformed escape keeps the raw text. */
+    private fun decodeFileName(value: String): String =
+        try {
+            URLDecoder.decode(value, "UTF-8")
+        } catch (e: Exception) {
+            value
+        }
 
     private fun sanitizeFileName(raw: String?, mimeType: String?): String {
         var name = (raw ?: "").trim().replace(Regex("""[\\/:*?"<>|]"""), "_")
@@ -262,6 +302,43 @@ class DownloadController private constructor(context: Context) {
         val item = items.firstOrNull { it.id == id } ?: return
         if (item.status == DownloadStatus.COMPLETED) return
         start(item)
+    }
+
+    /**
+     * Rename a download that is not running (paused, failed or
+     * completed only — never while a session is live). The on-disk
+     * files move first: the .part file, then the completed file, so
+     * if the second move fails the first is rolled back and nothing
+     * is left half-renamed. [DownloadItem.fileName] — and with it
+     * the persisted record — changes only once every file that
+     * exists carries the new name. This is how a movie saved as
+     * ".bin" becomes ".mkv" again without re-downloading.
+     */
+    fun rename(id: String, rawNewName: String) {
+        val item = items.firstOrNull { it.id == id } ?: return
+        if (item.status != DownloadStatus.PAUSED &&
+            item.status != DownloadStatus.FAILED &&
+            item.status != DownloadStatus.COMPLETED
+        ) return
+        val sanitized = sanitizeFileName(rawNewName, item.mimeType)
+        if (sanitized == item.fileName) return
+        val target = uniqueName(sanitized)
+        if (target == item.fileName) return
+        val dir = downloadsDir()
+        val part = File(dir, item.partFileName)
+        val newPart = File(dir, "$target.part")
+        var partMoved = false
+        if (part.exists()) {
+            if (!part.renameTo(newPart)) return
+            partMoved = true
+        }
+        val completed = File(dir, item.fileName)
+        if (completed.exists() && !completed.renameTo(File(dir, target))) {
+            if (partMoved) newPart.renameTo(part)
+            return
+        }
+        item.fileName = target
+        persist()
     }
 
     /** Stop an in-flight download and throw its partial file away. */

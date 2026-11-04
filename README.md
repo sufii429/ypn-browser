@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.3 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.4 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -87,6 +87,17 @@ may ask the system to bring up a second network (the cellular one)
 next to Wi-Fi. The permission is now declared (normal, auto-granted,
 no runtime prompt); the error note also keeps 120 characters so a
 full system message fits.
+
+**1.0.4:** file names now keep their real extension. The old
+URLUtil.guessFileName replaced it with an extension derived from
+the server's Content-Type, so a 10 GB movie hosted on a generic
+server (application/octet-stream) was saved as "Aadarsha.bin"
+instead of ".mkv". Names are now taken from the Content-Disposition
+header or the URL path as-is; a MIME extension is only appended
+when a name has no extension at all. Existing downloads can also
+be renamed while paused, failed or completed (Downloads → Rename),
+so a movie already saved as .bin becomes .mkv — file and progress
+moved, no re-download.
 
 ## Themes
 

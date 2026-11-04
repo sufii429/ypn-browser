@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -57,6 +58,8 @@ fun DownloadsScreen(
     val sorted = downloads.items.sortedWith(
         compareBy<DownloadItem> { statusRank(it.status) }.thenByDescending { it.createdAt }
     )
+    // The one rename dialog, keyed by download id so only one shows.
+    var renameItemId by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = modifier
@@ -90,10 +93,28 @@ fun DownloadsScreen(
                     .padding(top = 10.dp)
             ) {
                 items(sorted, key = { it.id }) { item ->
-                    DownloadRow(item = item, downloads = downloads)
+                    DownloadRow(
+                        item = item,
+                        downloads = downloads,
+                        onRename = { renameItemId = item.id }
+                    )
                 }
             }
         }
+    }
+
+    val renameItem = renameItemId?.let { id ->
+        downloads.items.firstOrNull { it.id == id }
+    }
+    if (renameItem != null) {
+        RenameDialog(
+            item = renameItem,
+            onConfirm = { newName ->
+                downloads.rename(renameItem.id, newName)
+                renameItemId = null
+            },
+            onDismiss = { renameItemId = null }
+        )
     }
 }
 
@@ -141,7 +162,11 @@ private fun AddUrlRow(downloads: DownloadController) {
 }
 
 @Composable
-private fun DownloadRow(item: DownloadItem, downloads: DownloadController) {
+private fun DownloadRow(
+    item: DownloadItem,
+    downloads: DownloadController,
+    onRename: () -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
     val context = LocalContext.current
@@ -216,12 +241,14 @@ private fun DownloadRow(item: DownloadItem, downloads: DownloadController) {
                     }
                     DownloadStatus.PAUSED -> {
                         TextButton(onClick = { downloads.resume(item.id) }) { Text("Resume") }
+                        TextButton(onClick = onRename) { Text("Rename") }
                         TextButton(onClick = { downloads.deleteDownload(item.id) }) {
                             Text("Delete")
                         }
                     }
                     DownloadStatus.FAILED -> {
                         TextButton(onClick = { downloads.resume(item.id) }) { Text("Retry") }
+                        TextButton(onClick = onRename) { Text("Rename") }
                         TextButton(onClick = { downloads.deleteDownload(item.id) }) {
                             Text("Delete")
                         }
@@ -230,6 +257,7 @@ private fun DownloadRow(item: DownloadItem, downloads: DownloadController) {
                         TextButton(onClick = { downloads.openDownload(context, item) }) {
                             Text("Open")
                         }
+                        TextButton(onClick = onRename) { Text("Rename") }
                         TextButton(onClick = { downloads.deleteDownload(item.id) }) {
                             Text("Delete")
                         }
@@ -238,6 +266,39 @@ private fun DownloadRow(item: DownloadItem, downloads: DownloadController) {
             }
         }
     }
+}
+
+/**
+ * Rename prompt for a paused / failed / completed download,
+ * prefilled with the current file name. The controller sanitizes
+ * the text and de-collides it against existing files; this dialog
+ * only collects it.
+ */
+@Composable
+private fun RenameDialog(
+    item: DownloadItem,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember(item.id) { mutableStateOf(item.fileName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename download") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }) { Text("Rename") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 private fun statusLine(item: DownloadItem): String {
