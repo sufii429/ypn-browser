@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.3 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -76,6 +76,17 @@ only given up when no equivalent network exists, and an unbalanced
 pool release can no longer tear down a live registration. When the
 phone rejects a network request, the Paths line now reports that
 error instead of staying silent.
+
+**1.0.3:** the reseeding in 1.0.2 worked (Wi-Fi showed "ready"),
+and the new error reporting immediately named the remaining blocker:
+every requestNetwork call was being refused with "SecurityException:
+app.ypn.browser was not granted either of these permissions:
+android.permission.CHANGE_NETWORK_STATE, …" — the manifest never
+declared CHANGE_NETWORK_STATE, which Android requires before an app
+may ask the system to bring up a second network (the cellular one)
+next to Wi-Fi. The permission is now declared (normal, auto-granted,
+no runtime prompt); the error note also keeps 120 characters so a
+full system message fits.
 
 ## Themes
 

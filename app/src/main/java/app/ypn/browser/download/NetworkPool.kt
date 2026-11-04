@@ -133,7 +133,7 @@ class NetworkPool(context: Context) {
             // Recorded so the Downloads screen can say WHY a path is
             // missing instead of leaving it a silent mystery.
             lastRequestError =
-                (e.javaClass.simpleName + ": " + (e.message ?: "")).take(80)
+                (e.javaClass.simpleName + ": " + (e.message ?: "")).take(120)
             null
         }
     }

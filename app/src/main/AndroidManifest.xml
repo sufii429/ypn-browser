@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Phase 3 fix (v1.0.3): ConnectivityManager.requestNetwork — used
+         to bring up the cellular network next to Wi-Fi for dual-network
+         downloads — is refused with a SecurityException unless the app
+         holds CHANGE_NETWORK_STATE (a normal, auto-granted permission). -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!-- Phase 2: the embedded Open SSTP Client runs as a foreground
          VPN service (specialUse type, as in upstream OSC). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
