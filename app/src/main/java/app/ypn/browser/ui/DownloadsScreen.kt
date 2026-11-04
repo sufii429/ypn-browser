@@ -393,15 +393,23 @@ private fun SplitBar(item: DownloadItem) {
  * One slim line naming the physical network paths the accelerator
  * can currently see, so a one-sided split (e.g. every byte arriving
  * over mobile data) has its explanation on screen: the missing path
- * shows as "not found".
+ * shows as "not found", and a path that exists but keeps failing
+ * shows its last failure ("Wi-Fi error: …" / "Data error: …").
  */
 @Composable
 private fun PathStatusLine(downloads: DownloadController) {
     val wifi = if (downloads.wifiPathUp) "Wi-Fi: ready" else "Wi-Fi: not found"
     val cell = if (downloads.cellPathUp) "Mobile data: ready" else "Mobile data: not found"
     val note = downloads.poolNote
+    val wifiError = downloads.wifiPathError
+    val cellError = downloads.cellPathError
     Text(
-        text = "Paths — $wifi · $cell" + (note?.let { " · $it" } ?: ""),
+        text = buildString {
+            append("Paths — $wifi · $cell")
+            if (note != null) append(" · $note")
+            if (wifiError != null) append(" · Wi-Fi error: $wifiError")
+            if (cellError != null) append(" · Data error: $cellError")
+        },
         color = LocalYpnPalette.current.muted,
         fontSize = 11.sp,
         modifier = Modifier.padding(start = 4.dp, top = 8.dp)

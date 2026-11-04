@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.4 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.5 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -98,6 +98,17 @@ when a name has no extension at all. Existing downloads can also
 be renamed while paused, failed or completed (Downloads → Rename),
 so a movie already saved as .bin becomes .mkv — file and progress
 moved, no re-download.
+
+**1.0.5:** when a network path fails, the Paths line now says why.
+Both pool handles can be "ready" while one path still carries
+nothing (a host bound to one IP can refuse the second network, or
+its connections hang); the line now appends each path's last
+failure — "Data error: HTTP 403" for a server refusal, or the
+connection exception — and clears it as soon as that path writes
+bytes again. Workers stuck on a dead path also stop stalling
+chunks: after three chunk sequences without a single byte while
+the other path is demonstrably working, a worker switches to the
+healthy path for the rest of the download.
 
 ## Themes
 

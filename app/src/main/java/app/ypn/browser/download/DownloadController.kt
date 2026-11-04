@@ -88,6 +88,58 @@ class DownloadController private constructor(context: Context) {
     val poolNote: String?
         get() = pool.lastRequestError
 
+    /**
+     * The last failure each network path produced in the current
+     * run: an exception's name + short message, or "HTTP <code>"
+     * when the server itself refused the path (e.g. a host that
+     * bound a download to one IP answering the second network with
+     * an error). Both handles can be "ready" while one path still
+     * carries nothing — these say why. A path's error clears the
+     * moment that path writes bytes again; both reset in [start].
+     */
+    var wifiPathError: String? by mutableStateOf(null)
+        private set
+
+    var cellPathError: String? by mutableStateOf(null)
+        private set
+
+    /** Wall-clock time of each path's last recorded failure. */
+    private var wifiPathErrorAtMs = 0L
+    private var cellPathErrorAtMs = 0L
+
+    /** Note a failure of [kind]'s path for the Downloads screen. */
+    private fun recordPathError(kind: NetKind, error: String) {
+        val text = error.trim().take(MAX_PATH_ERROR_CHARS)
+        when (kind) {
+            NetKind.WIFI -> {
+                wifiPathError = text
+                wifiPathErrorAtMs = System.currentTimeMillis()
+            }
+            NetKind.CELL -> {
+                cellPathError = text
+                cellPathErrorAtMs = System.currentTimeMillis()
+            }
+        }
+    }
+
+    /** A write on [kind]'s path proves it works — clear its error. */
+    private fun clearPathError(kind: NetKind) {
+        when (kind) {
+            NetKind.WIFI -> wifiPathError = null
+            NetKind.CELL -> cellPathError = null
+        }
+    }
+
+    /** Compact failure label: exception type + short message. */
+    private fun describeError(e: Exception): String {
+        val message = e.message?.takeIf { it.isNotBlank() }?.trim()
+        return if (message == null) {
+            e.javaClass.simpleName
+        } else {
+            "${e.javaClass.simpleName}: $message"
+        }
+    }
+
     init {
         accelerationEnabled = store.acceleratorEnabled
         val dir = downloadsDir()
@@ -397,6 +449,10 @@ class DownloadController private constructor(context: Context) {
         val session = RunSession(item)
         sessions[item.id] = session
         item.error = null
+        wifiPathError = null
+        cellPathError = null
+        wifiPathErrorAtMs = 0L
+        cellPathErrorAtMs = 0L
         item.status = DownloadStatus.DOWNLOADING
         session.poolAcquired = accelerationEnabled
         if (session.poolAcquired) pool.acquire()
@@ -571,6 +627,14 @@ class DownloadController private constructor(context: Context) {
         // worker could keep re-claiming the very chunk its own path
         // cannot move while the healthy path sits idle.
         var avoidIndex = -1
+        // The role this worker currently streams under. Starts as the
+        // assigned role; a worker whose path proves dead (see below)
+        // permanently swaps to the other network for the rest of the
+        // session. Role-less workers (accelerator off) never swap.
+        var currentRole = role
+        // Consecutive chunk sequences this worker handed back without
+        // writing a single byte on them. Any byte written resets it.
+        var zeroByteFailures = 0
         while (!session.stopped) {
             val chunk = claimChunk(session, avoidIndex)
             if (chunk == null) {
@@ -585,11 +649,13 @@ class DownloadController private constructor(context: Context) {
                 continue
             }
             avoidIndex = -1
+            val claimedAt = chunk.downloaded
+            var handedBack = false
             var attempts = 0
             while (!chunk.complete && !session.stopped) {
                 val before = chunk.downloaded
                 try {
-                    streamChunkRange(session, chunk, part, role)
+                    streamChunkRange(session, chunk, part, currentRole)
                 } catch (e: IOException) {
                     // Counted as a no-progress attempt below.
                 }
@@ -608,12 +674,46 @@ class DownloadController private constructor(context: Context) {
                             // only when NO path makes progress.
                             unclaimChunk(session, chunk)
                             avoidIndex = chunk.index
+                            handedBack = true
                             delay(RETRY_DELAY_MS)
                             break
                         }
                         delay(RETRY_DELAY_MS)
                     } else {
                         attempts = 0
+                    }
+                }
+            }
+            if (!session.stopped) {
+                if (chunk.downloaded > claimedAt) {
+                    // This worker wrote bytes on the chunk — its path
+                    // works, so the dead-path evidence resets.
+                    zeroByteFailures = 0
+                } else if (handedBack && currentRole != null) {
+                    // A whole chunk sequence without one byte: this
+                    // path is producing nothing. Once that repeats
+                    // while the OTHER path demonstrably carries
+                    // bytes, stop wasting this worker on the dead
+                    // path — it joins the healthy one for the rest
+                    // of the session.
+                    zeroByteFailures++
+                    if (zeroByteFailures >= ROLE_SWAP_FAILURES) {
+                        val otherKind = if (currentRole == NetKind.WIFI) {
+                            NetKind.CELL
+                        } else {
+                            NetKind.WIFI
+                        }
+                        val otherBytes = synchronized(item.ioLock) {
+                            if (otherKind == NetKind.CELL) {
+                                item.cellBytes
+                            } else {
+                                item.wifiBytes
+                            }
+                        }
+                        if (otherBytes > 0) {
+                            currentRole = otherKind
+                            zeroByteFailures = 0
+                        }
                     }
                 }
             }
@@ -652,18 +752,32 @@ class DownloadController private constructor(context: Context) {
         val item = session.item
         val from = chunk.start + chunk.downloaded
         if (from > chunk.endInclusive) return
-        val (conn, network) = openFor(item, role)
-        session.connections += conn
+        var conn: HttpURLConnection? = null
+        // The network the bytes end up counted under, once known —
+        // the fallback attribution for failures after connect.
+        var countedKind: NetKind? = null
+        var failureRecorded = false
         try {
-            conn.setRequestProperty("Range", "bytes=$from-${chunk.endInclusive}")
-            val code = conn.responseCode
+            val opened = openFor(item, role)
+            conn = opened.first
+            val connection = opened.first
+            val network = opened.second
+            session.connections += connection
+            connection.setRequestProperty("Range", "bytes=$from-${chunk.endInclusive}")
+            val code = connection.responseCode
             if (code != HttpURLConnection.HTTP_PARTIAL) {
+                // Record BEFORE the throw, so the Paths line keeps
+                // the server's own answer (e.g. a host bound to one
+                // IP refusing the second network) instead of nothing.
+                recordPathError(role ?: pool.kindOf(network), "HTTP $code")
+                failureRecorded = true
                 throw IOException("HTTP $code on a range request")
             }
             val kind = pool.kindOf(network)
+            countedKind = kind
             RandomAccessFile(part, "rw").use { raf ->
                 raf.seek(from)
-                conn.inputStream.use { input ->
+                connection.inputStream.use { input ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     var pos = from
                     while (pos <= chunk.endInclusive) {
@@ -685,13 +799,28 @@ class DownloadController private constructor(context: Context) {
                             } else {
                                 item.wifiBytes += read
                             }
+                            clearPathError(kind)
                         }
                     }
                 }
             }
+        } catch (e: IOException) {
+            // A connection that throws while opening or streaming:
+            // keep the reason against the worker's path. A failure
+            // caused by our own stop (pause/fail disconnects live
+            // connections) is not a path failure, so it is skipped.
+            if (!failureRecorded && !session.stopped) {
+                recordPathError(
+                    role ?: countedKind ?: pool.kindOf(null),
+                    describeError(e)
+                )
+            }
+            throw e
         } finally {
-            session.connections -= conn
-            conn.disconnect()
+            conn?.let {
+                session.connections -= it
+                it.disconnect()
+            }
         }
     }
 
@@ -710,18 +839,31 @@ class DownloadController private constructor(context: Context) {
             item.cellBytes = 0
         }
         val role = if (accelerationEnabled) NetKind.WIFI else null
-        val (conn, network) = openFor(item, role)
-        session.connections += conn
+        var conn: HttpURLConnection? = null
+        var network: Network? = null
+        var countedKind: NetKind? = null
+        var failureRecorded = false
         try {
-            val code = conn.responseCode
-            if (code != HttpURLConnection.HTTP_OK) throw IOException("HTTP $code")
-            val length = conn.contentLengthLong
+            val opened = openFor(item, role)
+            conn = opened.first
+            val connection = opened.first
+            network = opened.second
+            session.connections += connection
+            val code = connection.responseCode
+            if (code != HttpURLConnection.HTTP_OK) {
+                // Record before the throw, as in streamChunkRange.
+                recordPathError(role ?: pool.kindOf(network), "HTTP $code")
+                failureRecorded = true
+                throw IOException("HTTP $code")
+            }
+            val length = connection.contentLengthLong
             if (length > 0) item.totalBytes = length
             val kind = pool.kindOf(network)
+            countedKind = kind
             var written = 0L
             RandomAccessFile(part, "rw").use { raf ->
                 raf.setLength(0)
-                conn.inputStream.use { input ->
+                connection.inputStream.use { input ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     while (true) {
                         if (session.stopped) break
@@ -737,6 +879,7 @@ class DownloadController private constructor(context: Context) {
                             } else {
                                 item.wifiBytes += read
                             }
+                            clearPathError(kind)
                         }
                     }
                 }
@@ -747,9 +890,21 @@ class DownloadController private constructor(context: Context) {
             }
             if (item.totalBytes < 0) item.totalBytes = written
             return true
+        } catch (e: IOException) {
+            // Same per-path failure reporting as the chunked engine;
+            // our own stop (pause/fail) is not a path failure.
+            if (!failureRecorded && !session.stopped) {
+                recordPathError(
+                    role ?: countedKind ?: pool.kindOf(network),
+                    describeError(e)
+                )
+            }
+            throw e
         } finally {
-            session.connections -= conn
-            conn.disconnect()
+            conn?.let {
+                session.connections -= it
+                it.disconnect()
+            }
         }
     }
 
@@ -891,6 +1046,8 @@ class DownloadController private constructor(context: Context) {
         private const val CHUNK_BYTES = 2L * 1024 * 1024
         private const val MAX_CHUNKS = 128L
         private const val MAX_CHUNK_ATTEMPTS = 3
+        private const val ROLE_SWAP_FAILURES = 3
+        private const val MAX_PATH_ERROR_CHARS = 60
         private const val RETRY_DELAY_MS = 1_000L
         private const val CLAIM_WAIT_MS = 1_000L
         private const val STALL_LIMIT_MS = 120_000L
