@@ -192,6 +192,11 @@ private fun MenuRoot(
                     color = palette.muted,
                     fontSize = 11.sp
                 )
+                Text(
+                    text = "Takes effect on running downloads after Pause → Resume",
+                    color = palette.muted,
+                    fontSize = 11.sp
+                )
             }
             Switch(
                 checked = downloads.accelerationEnabled,

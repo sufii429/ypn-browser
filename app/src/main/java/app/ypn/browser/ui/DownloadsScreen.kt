@@ -72,6 +72,9 @@ fun DownloadsScreen(
             modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 6.dp)
         )
         AddUrlRow(downloads = downloads)
+        if (downloads.accelerationEnabled && downloads.hasActiveDownloads()) {
+            PathStatusLine(downloads = downloads)
+        }
         if (sorted.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -323,6 +326,24 @@ private fun SplitBar(item: DownloadItem) {
             )
         }
     }
+}
+
+/**
+ * One slim line naming the physical network paths the accelerator
+ * can currently see, so a one-sided split (e.g. every byte arriving
+ * over mobile data) has its explanation on screen: the missing path
+ * shows as "not found".
+ */
+@Composable
+private fun PathStatusLine(downloads: DownloadController) {
+    val wifi = if (downloads.wifiPathUp) "Wi-Fi: ready" else "Wi-Fi: not found"
+    val cell = if (downloads.cellPathUp) "Mobile data: ready" else "Mobile data: not found"
+    Text(
+        text = "Paths — $wifi · $cell",
+        color = LocalYpnPalette.current.muted,
+        fontSize = 11.sp,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+    )
 }
 
 @Composable

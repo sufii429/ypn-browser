@@ -72,6 +72,18 @@ class DownloadController private constructor(context: Context) {
     var accelerationEnabled by mutableStateOf(true)
         private set
 
+    /**
+     * Which physical network paths the accelerator's pool can
+     * currently see (a live handle exists). Maintained by [start] and
+     * the sampler while downloads run; the Downloads screen shows
+     * them so a one-sided split is explainable at a glance.
+     */
+    var wifiPathUp by mutableStateOf(false)
+        private set
+
+    var cellPathUp by mutableStateOf(false)
+        private set
+
     init {
         accelerationEnabled = store.acceleratorEnabled
         val dir = downloadsDir()
@@ -307,6 +319,7 @@ class DownloadController private constructor(context: Context) {
         item.status = DownloadStatus.DOWNLOADING
         session.poolAcquired = accelerationEnabled
         if (session.poolAcquired) pool.acquire()
+        refreshPathState()
         DownloadService.ensureStarted(appContext)
         session.job = scope.launch(Dispatchers.IO) { runEngine(session) }
         persist()
@@ -329,6 +342,9 @@ class DownloadController private constructor(context: Context) {
                         }
                         item.ranged && item.totalBytes > 0 -> {
                             prepareChunks(item)
+                            // The stall window measures chunk transfer
+                            // only — probe/setup time never counts.
+                            session.lastProgressAtMs = System.currentTimeMillis()
                             val workers = workerRoles().map { role ->
                                 launch { chunkWorker(session, role) }
                             }
@@ -349,6 +365,14 @@ class DownloadController private constructor(context: Context) {
         } finally {
             sessions.remove(item.id, session)
             if (session.poolAcquired) pool.release()
+            if (sessions.isEmpty()) {
+                // The last run is over, so its pool release (above, or
+                // in the session that held it) has dropped the network
+                // handles — the path flags must not keep showing the
+                // stale "ready" state of a finished run.
+                wifiPathUp = false
+                cellPathUp = false
+            }
             item.speedBps = 0
             item.wifiSpeedBps = 0
             item.cellSpeedBps = 0
@@ -460,8 +484,26 @@ class DownloadController private constructor(context: Context) {
     private suspend fun chunkWorker(session: RunSession, role: NetKind?) {
         val item = session.item
         val part = partFile(item)
+        // The chunk this worker most recently handed back as stuck. It
+        // is avoided on the next claim so a worker idling on the
+        // healthy network gets first pick of it — otherwise this
+        // worker could keep re-claiming the very chunk its own path
+        // cannot move while the healthy path sits idle.
+        var avoidIndex = -1
         while (!session.stopped) {
-            val chunk = claimChunk(session) ?: return
+            val chunk = claimChunk(session, avoidIndex)
+            if (chunk == null) {
+                // Nothing claimable: either every chunk is done (this
+                // worker leaves), or the unfinished ones are all
+                // claimed by other workers — wait and look again,
+                // because a stuck peer hands its chunk back and then
+                // there is work again. (fail() sets stopped, so a
+                // failed session also ends the wait.)
+                if (synchronized(item.ioLock) { item.chunks.all { it.complete } }) return
+                delay(CLAIM_WAIT_MS)
+                continue
+            }
+            avoidIndex = -1
             var attempts = 0
             while (!chunk.complete && !session.stopped) {
                 val before = chunk.downloaded
@@ -474,11 +516,19 @@ class DownloadController private constructor(context: Context) {
                     if (chunk.downloaded == before) {
                         attempts++
                         if (attempts >= MAX_CHUNK_ATTEMPTS) {
-                            session.fail(
-                                "Connection kept failing (${item.fileName}). " +
-                                    "Resume to try again."
-                            )
-                            return
+                            // This worker's path can't move the chunk
+                            // right now (the classic case: a Wi-Fi
+                            // network whose backhaul is dead, so its
+                            // connections hang or reset). Do NOT fail
+                            // the download — hand the chunk back so a
+                            // worker on the working network can take
+                            // it, wait, and look for another chunk.
+                            // Only the sampler may fail the run, and
+                            // only when NO path makes progress.
+                            unclaimChunk(session, chunk)
+                            avoidIndex = chunk.index
+                            delay(RETRY_DELAY_MS)
+                            break
                         }
                         delay(RETRY_DELAY_MS)
                     } else {
@@ -490,16 +540,24 @@ class DownloadController private constructor(context: Context) {
         }
     }
 
-    private fun claimChunk(session: RunSession): ChunkProgress? {
+    private fun claimChunk(session: RunSession, avoidIndex: Int = -1): ChunkProgress? {
         val item = session.item
         synchronized(session.claimed) {
             synchronized(item.ioLock) {
                 val next = item.chunks.firstOrNull { chunk ->
-                    !chunk.complete && chunk.index !in session.claimed
+                    !chunk.complete && chunk.index !in session.claimed &&
+                        chunk.index != avoidIndex
                 } ?: return null
                 session.claimed += next.index
                 return next
             }
+        }
+    }
+
+    /** Hand a claimed chunk back so another worker can pick it up. */
+    private fun unclaimChunk(session: RunSession, chunk: ChunkProgress) {
+        synchronized(session.claimed) {
+            session.claimed -= chunk.index
         }
     }
 
@@ -540,6 +598,7 @@ class DownloadController private constructor(context: Context) {
                         synchronized(item.ioLock) {
                             chunk.downloaded += read
                             item.downloadedBytes += read
+                            session.lastProgressAtMs = System.currentTimeMillis()
                             if (kind == NetKind.CELL) {
                                 item.cellBytes += read
                             } else {
@@ -591,6 +650,7 @@ class DownloadController private constructor(context: Context) {
                         written += read
                         synchronized(item.ioLock) {
                             item.downloadedBytes += read
+                            session.lastProgressAtMs = System.currentTimeMillis()
                             if (kind == NetKind.CELL) {
                                 item.cellBytes += read
                             } else {
@@ -634,6 +694,12 @@ class DownloadController private constructor(context: Context) {
         item.error = null
     }
 
+    /** Mirror the pool's live handles into Compose state for the UI. */
+    private fun refreshPathState() {
+        wifiPathUp = pool.wifiNetwork != null
+        cellPathUp = pool.cellNetwork != null
+    }
+
     /** ~2 Hz speed sampling (EMA-smoothed) + periodic persistence. */
     private suspend fun samplerLoop(session: RunSession) {
         val item = session.item
@@ -644,6 +710,21 @@ class DownloadController private constructor(context: Context) {
         var ticks = 0
         while (!session.stopped) {
             delay(SAMPLE_MS)
+            refreshPathState()
+            // Global stall detection for chunked downloads. A single
+            // dead network path must never fail a run (its workers
+            // hand their chunks back; the healthy path picks them
+            // up) — but if NO path has written a byte for a long
+            // stretch, the run is genuinely stuck, so fail it once
+            // and stop cleanly instead of spinning forever.
+            if (item.ranged && item.totalBytes > 0 &&
+                System.currentTimeMillis() - session.lastProgressAtMs > STALL_LIMIT_MS
+            ) {
+                session.fail(
+                    "No network path is making progress — download stalled. " +
+                        "Resume to try again."
+                )
+            }
             val now = System.nanoTime()
             val dtSec = (now - lastTime) / 1_000_000_000.0
             if (dtSec <= 0) continue
@@ -723,6 +804,8 @@ class DownloadController private constructor(context: Context) {
         private const val MAX_CHUNKS = 128L
         private const val MAX_CHUNK_ATTEMPTS = 3
         private const val RETRY_DELAY_MS = 1_000L
+        private const val CLAIM_WAIT_MS = 1_000L
+        private const val STALL_LIMIT_MS = 120_000L
         private const val SAMPLE_MS = 500L
     }
 }
@@ -734,6 +817,15 @@ private class RunSession(val item: DownloadItem) {
 
     @Volatile
     var failReason: String? = null
+
+    /**
+     * Wall-clock time of the last byte any worker wrote. Set at
+     * session creation, reset when chunked transfer begins, and
+     * updated inside the write loops' bookkeeping; the sampler fails
+     * the run if this goes stale for too long in chunked mode.
+     */
+    @Volatile
+    var lastProgressAtMs: Long = System.currentTimeMillis()
 
     var poolAcquired = false
     var job: Job? = null

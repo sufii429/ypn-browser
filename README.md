@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.0.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -54,6 +54,16 @@ which needs a day when his home Wi-Fi is back):
 - VPN Gate is run by volunteers whose stated logging policy is
   about two weeks — fine for casual browsing and unblocking, not
   for banking or other sensitive accounts.
+
+**1.0.1:** download-engine robustness, from the first real
+dual-network test (a Wi-Fi network whose backhaul was dead left its
+workers hanging while every byte arrived over mobile data). A chunk
+a worker can't move is now handed back for the healthy network to
+pick up instead of failing the whole download; the run only fails
+if no network path makes progress for two minutes. The Downloads
+screen also shows which network paths the app can see ("Paths —
+Wi-Fi: ready · Mobile data: ready") while an accelerated download
+is active.
 
 ## Themes
 
