@@ -110,7 +110,7 @@ fun HomeScreen(
         DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
         QuickTiles(onNavigate = onNavigate)
         Text(
-            text = "YPN Browser 1.0 — browsing, built-in VPN and dual-network downloads.",
+            text = "YPN Browser 1.1 — browsing, built-in VPN and dual-network downloads.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -570,12 +570,14 @@ private fun QuickTiles(onNavigate: (String) -> Unit) {
                     .clickable { onNavigate(url) },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // v1.1 Speed Dial tile: a tall rounded icon area with
-                // the glyph centered, the label beneath (Pawxy-style).
+                // Speed Dial tile: a tall rounded icon area with the
+                // glyph centered, the label beneath (Pawxy-style;
+                // height/glyph enlarged in v1.1.1 to match the
+                // approved mockup instead of a flat strip).
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(62.dp)
+                        .height(84.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(colors.surface)
                         .border(1.dp, colors.outline, RoundedCornerShape(16.dp)),
@@ -584,7 +586,7 @@ private fun QuickTiles(onNavigate: (String) -> Unit) {
                     Text(
                         text = glyph,
                         color = colors.primary,
-                        fontSize = 19.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }

@@ -1,7 +1,9 @@
 package app.ypn.browser.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -47,6 +50,7 @@ import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
+import app.ypn.browser.ui.theme.ypnThemeAccent
 
 private enum class MenuPage { ROOT, BOOKMARKS, HISTORY }
 
@@ -128,7 +132,7 @@ private fun MenuRoot(
         )
 
         MenuGroup(label = "APPEARANCE") {
-            ThemeRows(themeId = themeId, onThemeChange = onThemeChange)
+            ThemeSwatchRow(themeId = themeId, onThemeChange = onThemeChange)
         }
 
         MenuGroup(label = "DOWNLOADS") {
@@ -139,13 +143,17 @@ private fun MenuRoot(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically
+            // Top-aligned (v1.1.1): with centre alignment the icon
+            // floated midway down the title + two wrapped captions.
+            verticalAlignment = Alignment.Top
         ) {
             Icon(
                 imageVector = Icons.Filled.Bolt,
                 contentDescription = null,
                 tint = colors.primary,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(20.dp)
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -234,7 +242,7 @@ private fun MenuRoot(
         }
 
         Text(
-            text = "YPN Browser 1.0 — settings and themes live here, nowhere else.",
+            text = "YPN Browser 1.1 — settings and themes live here, nowhere else.",
             color = palette.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)
@@ -325,6 +333,57 @@ private fun GroupDivider() {
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outline)
     )
+}
+
+/**
+ * The APPEARANCE group's theme picker, as drawn in the approved
+ * v1.1 mockup (v1.1.1): a "Theme" row naming the current theme, and
+ * beneath it one circular swatch per theme, filled with that theme's
+ * accent colour (from the palette definitions, via [ypnThemeAccent]);
+ * the current theme's swatch is ringed with the active primary.
+ */
+@Composable
+private fun ThemeSwatchRow(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Column(
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Theme",
+                color = colors.onSurface,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = themeId.label,
+                color = palette.muted,
+                fontSize = 12.sp
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            YpnThemeId.entries.forEach { entry ->
+                val selected = entry == themeId
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(ypnThemeAccent(entry))
+                        .then(
+                            if (selected) {
+                                Modifier.border(2.dp, colors.primary, CircleShape)
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .clickable { onThemeChange(entry) }
+                )
+            }
+        }
+    }
 }
 
 /**

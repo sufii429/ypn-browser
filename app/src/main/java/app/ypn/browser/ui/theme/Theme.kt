@@ -1,12 +1,19 @@
 package app.ypn.browser.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsControllerCompat
 
 /**
  * The four approved design-mockup themes (artifact "browser-app-design-mockups").
@@ -38,6 +45,19 @@ data class YpnPalette(
     val muted: Color,
     val onAccent: Color
 )
+
+/**
+ * The accent colour of a theme — in every mockup theme the --accent is
+ * also the palette's `wifi` colour (and the colour scheme's `primary`).
+ * Exposed so the Menu's theme-swatch picker can fill each swatch from
+ * the palette definitions instead of hard-coding theme hexes.
+ */
+fun ypnThemeAccent(themeId: YpnThemeId): Color = when (themeId) {
+    YpnThemeId.MIDNIGHT_CYAN -> MidnightCyanPalette.wifi
+    YpnThemeId.EMBER -> EmberPalette.wifi
+    YpnThemeId.ROYAL_PURPLE -> RoyalPurplePalette.wifi
+    YpnThemeId.DAYLIGHT -> DaylightPalette.wifi
+}
 
 val LocalYpnPalette = staticCompositionLocalOf {
     YpnPalette(
@@ -183,7 +203,33 @@ fun YpnBrowserTheme(themeId: YpnThemeId = YpnThemeId.MIDNIGHT_CYAN, content: @Co
         YpnThemeId.ROYAL_PURPLE -> RoyalPurplePalette
         YpnThemeId.DAYLIGHT -> DaylightPalette
     }
+
+    // The app draws edge-to-edge (MainActivity calls enableEdgeToEdge
+    // once, at startup), so the system bars sit directly on the theme
+    // background. Pick light or dark status/navigation-bar icons from
+    // the ACTIVE background's luminance whenever the theme changes —
+    // without this, the default dark icons vanish on the three dark
+    // themes' backgrounds (fixed in v1.1.1; Daylight always worked).
+    val view = LocalView.current
+    SideEffect {
+        val window = view.context.findActivity()?.window
+        if (window != null) {
+            val lightBars = colors.background.luminance() > 0.5f
+            WindowInsetsControllerCompat(window, view).apply {
+                isAppearanceLightStatusBars = lightBars
+                isAppearanceLightNavigationBars = lightBars
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalYpnPalette provides palette) {
         MaterialTheme(colorScheme = colors, content = content)
     }
+}
+
+/** Walks a context chain to its Activity, or null if there is none. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

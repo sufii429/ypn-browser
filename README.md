@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.1.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.1.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -121,6 +121,15 @@ Menu is grouped Pawxy-style — small caps labels over rounded cards
 (Appearance / Downloads / Browsing / Library), with a Downloads
 row that carries the live active-downloads badge. All colours come
 from the active theme, so all four themes render the new shapes.
+
+**1.1.1:** literal pass against the approved mockup, from Mazeen's
+screenshots of 1.1.0. The status-bar and navigation-bar icons now
+follow the active theme (dark icons on Daylight, light icons on the
+three dark themes — before, they vanished on dark backgrounds). The
+Home quick tiles are the mockup's taller Speed Dial tiles, the
+Menu's Appearance group picks themes by accent swatches, the
+acceleration icon sits at the top of its row, and the Home/Menu
+footers say 1.1.
 
 ## Themes
 
