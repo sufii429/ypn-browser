@@ -34,8 +34,8 @@ android {
         applicationId = "app.ypn.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.0.5"
+        versionCode = 15
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

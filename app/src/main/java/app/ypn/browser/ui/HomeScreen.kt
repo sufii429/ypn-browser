@@ -75,7 +75,10 @@ import app.ypn.browser.vpn.VpnServer
  * [downloads] with its measured per-network data. Phase 4 slimmed
  * this screen to the approved map: address bar, the compact VPN
  * card, the download card ONLY while a download is active, and the
- * quick tiles — the theme picker lives in the Menu now.
+ * quick tiles — the theme picker lives in the Menu now. v1.1 added
+ * the Pawxy-style VPN chip at the search bar's right end (it opens
+ * the VPN bottom sheet, see VpnSheet.kt) and restyled the quick
+ * tiles as bigger Speed Dial tiles.
  */
 @Composable
 fun HomeScreen(
@@ -84,6 +87,7 @@ fun HomeScreen(
     vpn: VpnController,
     onVpnOpen: () -> Unit,
     onVpnConnectRequest: (VpnServer) -> Unit,
+    onVpnSheetOpen: () -> Unit,
     downloads: DownloadController,
     onDownloadsOpen: () -> Unit,
     modifier: Modifier = Modifier
@@ -96,7 +100,12 @@ fun HomeScreen(
             .padding(bottom = 16.dp)
     ) {
         AppHeader()
-        AddressBar(tabCount = tabCount, onNavigate = onNavigate)
+        AddressBar(
+            tabCount = tabCount,
+            onNavigate = onNavigate,
+            vpn = vpn,
+            onVpnSheetOpen = onVpnSheetOpen
+        )
         VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
         DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
         QuickTiles(onNavigate = onNavigate)
@@ -148,7 +157,12 @@ private fun AppHeader() {
 }
 
 @Composable
-private fun AddressBar(tabCount: Int, onNavigate: (String) -> Unit) {
+private fun AddressBar(
+    tabCount: Int,
+    onNavigate: (String) -> Unit,
+    vpn: VpnController,
+    onVpnSheetOpen: () -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
     val focusManager = LocalFocusManager.current
@@ -218,6 +232,8 @@ private fun AddressBar(tabCount: Int, onNavigate: (String) -> Unit) {
                 fontWeight = FontWeight.Bold
             )
         }
+        Spacer(Modifier.width(7.dp))
+        VpnChip(vpn = vpn, onClick = onVpnSheetOpen)
     }
 }
 
@@ -554,25 +570,28 @@ private fun QuickTiles(onNavigate: (String) -> Unit) {
                     .clickable { onNavigate(url) },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // v1.1 Speed Dial tile: a tall rounded icon area with
+                // the glyph centered, the label beneath (Pawxy-style).
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .fillMaxWidth()
+                        .height(62.dp)
+                        .clip(RoundedCornerShape(16.dp))
                         .background(colors.surface)
-                        .border(1.dp, colors.outline, RoundedCornerShape(14.dp)),
+                        .border(1.dp, colors.outline, RoundedCornerShape(16.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = glyph,
                         color = colors.primary,
-                        fontSize = 15.sp,
+                        fontSize = 19.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
                 Text(
                     text = label,
                     color = LocalYpnPalette.current.muted,
-                    fontSize = 10.sp,
+                    fontSize = 10.5.sp,
                     modifier = Modifier.padding(top = 5.dp)
                 )
             }

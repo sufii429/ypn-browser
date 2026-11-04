@@ -61,6 +61,9 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * composition (see [BrowserController.warmUp]), Home no longer
  * carries the theme picker (Menu is the single settings home), and
  * VPN quick-connect prefers a server remembered as working.
+ * Since v1.1 this shell also hosts the shared VPN bottom sheet
+ * (VpnSheet), opened from the VPN chips on Home and in the browser
+ * toolbar.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -70,6 +73,10 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     val vpn = remember { VpnController(context) }
     var selected by remember { mutableStateOf(YpnSection.HOME) }
     var showVpn by remember { mutableStateOf(false) }
+    // v1.1: the VPN bottom sheet (VpnSheet) is hosted here at the
+    // root so the VPN chips on Home and in the browser toolbar open
+    // the one shared sheet.
+    var vpnSheetOpen by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
     // Phase 4 pre-warm: build the first tab's WebView (and with it
@@ -173,7 +180,9 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                     } else if (controller.browsing) {
                         BrowserScreen(
                             controller = controller,
-                            onHome = { controller.browsing = false }
+                            onHome = { controller.browsing = false },
+                            vpn = vpn,
+                            onVpnSheetOpen = { vpnSheetOpen = true }
                         )
                     } else {
                         HomeScreen(
@@ -182,6 +191,7 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             vpn = vpn,
                             onVpnOpen = { showVpn = true },
                             onVpnConnectRequest = onVpnConnectRequest,
+                            onVpnSheetOpen = { vpnSheetOpen = true },
                             downloads = downloads,
                             onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
                         )
@@ -208,7 +218,16 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                     onOpenUrl = { url ->
                         controller.openInNewTab(url)
                         selected = YpnSection.HOME
-                    }
+                    },
+                    onShowDownloads = { selected = YpnSection.DOWNLOADS }
+                )
+            }
+
+            if (vpnSheetOpen) {
+                VpnSheet(
+                    vpn = vpn,
+                    onConnectRequest = onVpnConnectRequest,
+                    onDismissRequest = { vpnSheetOpen = false }
                 )
             }
         }

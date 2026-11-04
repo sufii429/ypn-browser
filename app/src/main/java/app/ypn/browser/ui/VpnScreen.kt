@@ -193,7 +193,7 @@ private fun ServerSectionHeader(text: String) {
 }
 
 @Composable
-private fun ServerDivider() {
+fun ServerDivider() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -203,6 +203,28 @@ private fun ServerDivider() {
     )
 }
 
+/**
+ * The status wording for the tunnel, shared by the VPN screen's
+ * status card and the v1.1 VPN bottom sheet so both always agree.
+ */
+fun vpnStatusHeadline(vpn: VpnController): String = when (vpn.phase) {
+    VpnPhase.ON -> "Connected"
+    VpnPhase.CONNECTING -> "Connecting…"
+    VpnPhase.FAILED -> "Connection failed"
+    VpnPhase.OFF -> "Not connected"
+}
+
+fun vpnStatusDetail(vpn: VpnController): String = when (vpn.phase) {
+    VpnPhase.ON -> listOfNotNull(
+        vpn.currentServer?.let { "${it.flagEmoji} ${it.sstpHost}" },
+        vpn.statusText.ifBlank { null }
+    ).joinToString(" · ")
+    VpnPhase.CONNECTING -> vpn.statusText.ifBlank { "Negotiating the SSTP tunnel…" }
+    VpnPhase.FAILED -> vpn.statusText
+        .ifBlank { "No server could be reached." }
+    VpnPhase.OFF -> "Tap Connect for the best server, or pick one from the list."
+}
+
 @Composable
 private fun VpnStatusCard(
     vpn: VpnController,
@@ -210,24 +232,9 @@ private fun VpnStatusCard(
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
-    val server = vpn.currentServer
 
-    val headline = when (vpn.phase) {
-        VpnPhase.ON -> "Connected"
-        VpnPhase.CONNECTING -> "Connecting…"
-        VpnPhase.FAILED -> "Connection failed"
-        VpnPhase.OFF -> "Not connected"
-    }
-    val detail = when (vpn.phase) {
-        VpnPhase.ON -> listOfNotNull(
-            server?.let { "${it.flagEmoji} ${it.sstpHost}" },
-            vpn.statusText.ifBlank { null }
-        ).joinToString(" · ")
-        VpnPhase.CONNECTING -> vpn.statusText.ifBlank { "Negotiating the SSTP tunnel…" }
-        VpnPhase.FAILED -> vpn.statusText
-            .ifBlank { "No server could be reached." }
-        VpnPhase.OFF -> "Tap Connect for the best server, or pick one from the list."
-    }
+    val headline = vpnStatusHeadline(vpn)
+    val detail = vpnStatusDetail(vpn)
 
     Card(
         modifier = Modifier
@@ -291,7 +298,7 @@ private fun VpnStatusCard(
 }
 
 @Composable
-private fun ServerRow(
+fun ServerRow(
     server: VpnServer,
     workedHere: Boolean,
     connectedHere: Boolean,

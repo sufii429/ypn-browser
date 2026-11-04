@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.0.5 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.1.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -109,6 +109,18 @@ bytes again. Workers stuck on a dead path also stop stalling
 chunks: after three chunk sequences without a single byte while
 the other path is demonstrably working, a worker switches to the
 healthy path for the rest of the download.
+
+**1.1.0:** Pawxy-inspired UI polish, no functional changes. A "VPN"
+chip now sits at the right end of the Home search bar and of the
+browsing address bar — accent-filled while the tunnel is on — and
+opens a bottom-sheet server list with the tunnel status, one
+Connect/Disconnect button, "Worked before" servers on top and the
+full list below (the Home VPN card still opens the full VPN
+screen). Home's quick tiles are bigger Speed Dial tiles, and the
+Menu is grouped Pawxy-style — small caps labels over rounded cards
+(Appearance / Downloads / Browsing / Library), with a Downloads
+row that carries the live active-downloads badge. All colours come
+from the active theme, so all four themes render the new shapes.
 
 ## Themes
 

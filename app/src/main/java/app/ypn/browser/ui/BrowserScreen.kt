@@ -55,6 +55,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.browser.BrowserTab
 import app.ypn.browser.ui.theme.LocalYpnPalette
+import app.ypn.browser.vpn.VpnController
 
 /**
  * The real browsing view (Phase 1): toolbar (back / forward / address
@@ -62,12 +63,16 @@ import app.ypn.browser.ui.theme.LocalYpnPalette
  * and the active tab's WebView underneath. Since Phase 4 the WebView
  * is painted over the theme surface colour, and until a tab's first
  * page commits, [InitialLoadOverlay] covers it with a real loading
- * state instead of a blank black screen.
+ * state instead of a blank black screen. v1.1 added the Pawxy-style
+ * VPN chip at the address bar's right end (it opens the VPN bottom
+ * sheet, see VpnSheet.kt).
  */
 @Composable
 fun BrowserScreen(
     controller: BrowserController,
     onHome: () -> Unit,
+    vpn: VpnController,
+    onVpnSheetOpen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
@@ -79,7 +84,13 @@ fun BrowserScreen(
             .fillMaxSize()
             .background(colors.background)
     ) {
-        BrowserToolbar(controller = controller, tab = tab, onHome = onHome)
+        BrowserToolbar(
+            controller = controller,
+            tab = tab,
+            onHome = onHome,
+            vpn = vpn,
+            onVpnSheetOpen = onVpnSheetOpen
+        )
         if (tab != null && tab.isLoading) {
             LinearProgressIndicator(
                 progress = { tab.progress / 100f },
@@ -173,7 +184,9 @@ private fun InitialLoadOverlay(url: String, progress: Int) {
 private fun BrowserToolbar(
     controller: BrowserController,
     tab: BrowserTab?,
-    onHome: () -> Unit
+    onHome: () -> Unit,
+    vpn: VpnController,
+    onVpnSheetOpen: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
@@ -275,6 +288,8 @@ private fun BrowserToolbar(
                     }
                 }
             )
+            Spacer(Modifier.width(6.dp))
+            VpnChip(vpn = vpn, onClick = onVpnSheetOpen)
         }
 
         IconButton(
