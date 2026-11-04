@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -65,7 +66,12 @@ import app.ypn.browser.vpn.VpnController
  * page commits, [InitialLoadOverlay] covers it with a real loading
  * state instead of a blank black screen. v1.1 added the Pawxy-style
  * VPN chip at the address bar's right end (it opens the VPN bottom
- * sheet, see VpnSheet.kt).
+ * sheet, see VpnSheet.kt). v1.2 ("Mazedaar") makes page loads show
+ * themselves, Vivaldi-style: a small spinner turns at the left of
+ * the address bar while the active tab loads, and the progress line
+ * under the toolbar is a thin 3dp line — both read the tab's real
+ * [BrowserTab.isLoading] / [BrowserTab.progress] state, which the
+ * controller feeds from the WebView's own callbacks.
  */
 @Composable
 fun BrowserScreen(
@@ -92,9 +98,15 @@ fun BrowserScreen(
             onVpnSheetOpen = onVpnSheetOpen
         )
         if (tab != null && tab.isLoading) {
+            // Directly under the toolbar's address bar: a thin (3dp,
+            // v1.2) line filled with the tab's real load progress.
+            // isLoading is progress in 1..99, so the line hides itself
+            // the moment the page finishes.
             LinearProgressIndicator(
                 progress = { tab.progress / 100f },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp),
                 color = colors.primary,
                 trackColor = LocalYpnPalette.current.surface2
             )
@@ -237,12 +249,23 @@ private fun BrowserToolbar(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Filled.Lock,
-                contentDescription = null,
-                tint = colors.primary,
-                modifier = Modifier.size(12.dp)
-            )
+            if (tab?.isLoading == true) {
+                // v1.2: while the page loads, a small spinner turns
+                // where the lock sits — the load is visible from
+                // inside the bar, not just under it.
+                CircularProgressIndicator(
+                    color = colors.primary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(14.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
             Spacer(Modifier.width(6.dp))
             BasicTextField(
                 value = if (editing) editText else currentUrl,

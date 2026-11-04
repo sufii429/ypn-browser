@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -339,8 +340,11 @@ private fun GroupDivider() {
  * The APPEARANCE group's theme picker, as drawn in the approved
  * v1.1 mockup (v1.1.1): a "Theme" row naming the current theme, and
  * beneath it one circular swatch per theme, filled with that theme's
- * accent colour (from the palette definitions, via [ypnThemeAccent]);
- * the current theme's swatch is ringed with the active primary.
+ * accent colour (from the palette definitions, via [ypnThemeAccent]).
+ * Since v1.2 the selected swatch wears the approved v1.2 mockup's
+ * treatment — a thin outline, a white ring clear of the swatch, and
+ * a white ✓ — because the old primary-coloured ring sat on the very
+ * colour it was meant to stand out from and vanished.
  */
 @Composable
 private fun ThemeSwatchRow(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -367,20 +371,51 @@ private fun ThemeSwatchRow(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> U
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             YpnThemeId.entries.forEach { entry ->
                 val selected = entry == themeId
+                // Every swatch sits in the same 31dp slot so the row
+                // never shifts when the selection moves. Unselected:
+                // the plain 26dp circle, as before. Selected (v1.2):
+                // a slightly smaller circle wrapped in a thin
+                // outline and a 2dp white ring with a gap on each
+                // side, and a white ✓ in the middle — a different
+                // colour from the theme itself, visible on all four.
                 Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(ypnThemeAccent(entry))
-                        .then(
-                            if (selected) {
-                                Modifier.border(2.dp, colors.primary, CircleShape)
-                            } else {
-                                Modifier
-                            }
+                    modifier = Modifier.size(31.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
+                        Box(
+                            modifier = Modifier
+                                .size(31.dp)
+                                .border(
+                                    1.dp,
+                                    colors.onSurface.copy(alpha = 0.45f),
+                                    CircleShape
+                                )
                         )
-                        .clickable { onThemeChange(entry) }
-                )
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .border(2.dp, Color.White, CircleShape)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(if (selected) 23.dp else 26.dp)
+                            .clip(CircleShape)
+                            .background(ypnThemeAccent(entry))
+                            .clickable { onThemeChange(entry) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (selected) {
+                            Text(
+                                text = "✓",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
             }
         }
     }

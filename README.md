@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.1.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.2.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -138,6 +138,23 @@ both feed one curved download arrow — the dual-network USP as a
 glyph. The Home footer now carries the name's meaning as its
 tagline: "YPN · Your Personal Network — two networks, one fast
 download." (YPN = Your Personal Network, Mazeen's own expansion.)
+
+**1.2.0 ("Mazedaar"):** the delight pass, shaped by Mazeen's study
+of Vivaldi. Page loads now show themselves: a small spinner turns
+at the left of the address bar while the active tab loads, and the
+line under the toolbar is a thin 3dp progress line filled with the
+tab's real load progress (both read the WebView's own progress
+state). The Home Speed Dial is his own now — the tile list is
+editable and saved on the phone: tap the dashed + tile to add a
+site by name and address, hold any tile for Open / Edit / Remove;
+custom tiles wear the first letter of their name in a colour hashed
+from the name, and the original four remain the first-run seed.
+Home sits on a soft gradient in the active theme's two network
+colours (Wi-Fi colour washing in from the top, data colour from
+the bottom), with the VPN card, download card and tiles slightly
+translucent so the glow breathes through. The Menu's selected
+theme swatch now wears a contrasting white ring and check, visible
+on every theme.
 
 ## Themes
 

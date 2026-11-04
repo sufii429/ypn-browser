@@ -1,8 +1,10 @@
 package app.ypn.browser.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,13 +30,20 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +52,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -55,6 +73,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.ypn.browser.data.SpeedDialStore
+import app.ypn.browser.data.SpeedDialTile
 import app.ypn.browser.download.DownloadController
 import app.ypn.browser.download.DownloadStatus
 import app.ypn.browser.download.formatBytes
@@ -78,7 +98,12 @@ import app.ypn.browser.vpn.VpnServer
  * quick tiles — the theme picker lives in the Menu now. v1.1 added
  * the Pawxy-style VPN chip at the search bar's right end (it opens
  * the VPN bottom sheet, see VpnSheet.kt) and restyled the quick
- * tiles as bigger Speed Dial tiles.
+ * tiles as bigger Speed Dial tiles. v1.2 ("Mazedaar") paints a soft
+ * two-colour gradient in the active theme's network colours behind
+ * this screen only (the VPN card, download card and tiles turn
+ * slightly translucent so it breathes through), and the fixed quick
+ * tiles became Mazeen's own editable, persisted Speed Dial — see
+ * [SpeedDial] and SpeedDialStore.
  */
 @Composable
 fun HomeScreen(
@@ -92,29 +117,65 @@ fun HomeScreen(
     onDownloadsOpen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    // v1.2: Home — and only Home — sits on a living background: the
+    // theme background, washed with the palette's Wi-Fi colour from
+    // the top-right and its data colour from the bottom-left, both
+    // faded out by mid-screen. The cards and tiles on this screen
+    // are slightly translucent so the glow breathes through them.
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 16.dp)
+            .background(colors.background)
+            .drawBehind {
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(
+                            0f to palette.wifi.copy(alpha = 0.18f),
+                            0.55f to palette.wifi.copy(alpha = 0f),
+                            1f to palette.wifi.copy(alpha = 0f)
+                        ),
+                        start = Offset(size.width, 0f),
+                        end = Offset(0f, size.height)
+                    )
+                )
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(
+                            0f to palette.data.copy(alpha = 0.12f),
+                            0.55f to palette.data.copy(alpha = 0f),
+                            1f to palette.data.copy(alpha = 0f)
+                        ),
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, 0f)
+                    )
+                )
+            }
     ) {
-        AppHeader()
-        AddressBar(
-            tabCount = tabCount,
-            onNavigate = onNavigate,
-            vpn = vpn,
-            onVpnSheetOpen = onVpnSheetOpen
-        )
-        VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
-        DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
-        QuickTiles(onNavigate = onNavigate)
-        Text(
-            text = "YPN · Your Personal Network — two networks, one fast download.",
-            color = LocalYpnPalette.current.muted,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(start = 16.dp, top = 14.dp)
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 16.dp)
+        ) {
+            AppHeader()
+            AddressBar(
+                tabCount = tabCount,
+                onNavigate = onNavigate,
+                vpn = vpn,
+                onVpnSheetOpen = onVpnSheetOpen
+            )
+            VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
+            DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
+            SpeedDial(onNavigate = onNavigate)
+            Text(
+                text = "YPN · Your Personal Network — two networks, one fast download.",
+                color = palette.muted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 16.dp, top = 14.dp)
+            )
+        }
     }
 }
 
@@ -282,7 +343,9 @@ private fun VpnCard(
             .padding(start = 12.dp, end = 12.dp, top = 12.dp)
             .clickable { onOpen() },
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        // v1.2 glass: slightly translucent so Home's gradient
+        // breathes through the card.
+        colors = CardDefaults.cardColors(containerColor = colors.surface.copy(alpha = 0.85f)),
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
@@ -391,7 +454,9 @@ private fun DownloadCard(
             .padding(start = 12.dp, end = 12.dp, top = 12.dp)
             .clickable { onOpenDownloads() },
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        // v1.2 glass: slightly translucent so Home's gradient
+        // breathes through the card.
+        colors = CardDefaults.cardColors(containerColor = colors.surface.copy(alpha = 0.85f)),
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
     ) {
         Column(Modifier.padding(14.dp)) {
@@ -548,55 +613,404 @@ private fun LegendItem(color: androidx.compose.ui.graphics.Color, label: String)
     }
 }
 
+/**
+ * The Home Speed Dial (v1.2): Mazeen's own tiles, no longer a fixed
+ * list. The list lives in [SpeedDialStore] on the phone (seeded with
+ * [SpeedDialStore.SEED_TILES] on first run, saved on every change),
+ * drawn in rows of four with exactly the old quick tiles' look — an
+ * 84dp translucent surface box, the glyph at 24sp, the name beneath —
+ * plus a dashed "+ Add" cell after the last tile. Tapping a tile
+ * browses; holding it opens an Open / Edit / Remove menu; the editor
+ * is a bottom sheet in the VpnSheet pattern.
+ */
 @Composable
-private fun QuickTiles(onNavigate: (String) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val tiles = listOf(
-        Triple("▶", "YouTube", "https://www.youtube.com"),
-        Triple("M", "mrjobs.top", "https://mrjobs.top"),
-        Triple("K", "Kitaabcha", "https://kitaabcha.blogspot.com"),
-        Triple("W", "Wikipedia", "https://www.wikipedia.org")
-    )
-    Row(
+private fun SpeedDial(onNavigate: (String) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { SpeedDialStore(context.applicationContext) }
+    var tiles by remember {
+        mutableStateOf(
+            // First run: seed with the original four and save them,
+            // so removing tiles later never brings them back.
+            store.loadTiles() ?: SpeedDialStore.SEED_TILES.also { store.saveTiles(it) }
+        )
+    }
+    var menuIndex by remember { mutableStateOf<Int?>(null) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var editorOpen by remember { mutableStateOf(false) }
+
+    fun persist(next: List<SpeedDialTile>) {
+        tiles = next
+        store.saveTiles(next)
+    }
+
+    // Cells are tile indices; -1 is the "+ Add" cell that always
+    // follows the last tile.
+    val cells = tiles.indices.toList() + listOf(-1)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(9.dp)
+            .padding(start = 12.dp, end = 12.dp, top = 14.dp)
     ) {
-        tiles.forEach { (glyph, label, url) ->
-            Column(
+        cells.chunked(4).forEachIndexed { rowIndex, rowCells ->
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .clickable { onNavigate(url) },
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxWidth()
+                    .then(if (rowIndex > 0) Modifier.padding(top = 12.dp) else Modifier),
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                // Speed Dial tile: a tall rounded icon area with the
-                // glyph centered, the label beneath (Pawxy-style;
-                // height/glyph enlarged in v1.1.1 to match the
-                // approved mockup instead of a flat strip).
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(84.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(colors.surface)
-                        .border(1.dp, colors.outline, RoundedCornerShape(16.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = glyph,
-                        color = colors.primary,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                rowCells.forEach { cellIndex ->
+                    if (cellIndex < 0) {
+                        SpeedDialAddCell(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                editingIndex = null
+                                editorOpen = true
+                            }
+                        )
+                    } else {
+                        SpeedDialCell(
+                            tile = tiles[cellIndex],
+                            menuExpanded = menuIndex == cellIndex,
+                            onClick = { onNavigate(tiles[cellIndex].url) },
+                            onLongClick = { menuIndex = cellIndex },
+                            onMenuDismiss = { menuIndex = null },
+                            onOpen = {
+                                menuIndex = null
+                                onNavigate(tiles[cellIndex].url)
+                            },
+                            onEdit = {
+                                menuIndex = null
+                                editingIndex = cellIndex
+                                editorOpen = true
+                            },
+                            onRemove = {
+                                menuIndex = null
+                                persist(tiles.filterIndexed { i, _ -> i != cellIndex })
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
-                Text(
-                    text = label,
-                    color = LocalYpnPalette.current.muted,
-                    fontSize = 10.5.sp,
-                    modifier = Modifier.padding(top = 5.dp)
-                )
+                // Pad a short last row so its cells keep the same
+                // width as the full rows above them.
+                repeat(4 - rowCells.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
+
+    if (editorOpen) {
+        SpeedDialEditorSheet(
+            initial = editingIndex?.let { tiles.getOrNull(it) },
+            onDismiss = { editorOpen = false },
+            onSave = { saved ->
+                val at = editingIndex
+                persist(
+                    if (at == null || at !in tiles.indices) {
+                        tiles + saved
+                    } else {
+                        tiles.mapIndexed { i, tile -> if (i == at) saved else tile }
+                    }
+                )
+                editorOpen = false
+            }
+        )
+    }
+}
+
+/** One Speed Dial tile: the old quick-tile look, plus its hold menu. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SpeedDialCell(
+    tile: SpeedDialTile,
+    menuExpanded: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onMenuDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Box(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(84.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colors.surface.copy(alpha = 0.85f))
+                    .border(1.dp, colors.outline, RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = tile.glyph.ifBlank {
+                        tile.name.firstOrNull()?.uppercase() ?: "?"
+                    },
+                    color = speedDialGlyphColor(tile, colors.primary),
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            Text(
+                text = tile.name,
+                color = palette.muted,
+                fontSize = 10.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 5.dp)
+            )
+        }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = onMenuDismiss) {
+            DropdownMenuItem(
+                text = { Text("Open") },
+                onClick = onOpen
+            )
+            DropdownMenuItem(
+                text = { Text("Edit") },
+                onClick = onEdit
+            )
+            DropdownMenuItem(
+                text = { Text("Remove") },
+                onClick = onRemove
+            )
+        }
+    }
+}
+
+/** The dashed "+ Add" cell that follows the last tile (v1.2 mockup). */
+@Composable
+private fun SpeedDialAddCell(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val palette = LocalYpnPalette.current
+    val dashColor = palette.muted.copy(alpha = 0.65f)
+    Column(
+        modifier = modifier.clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(84.dp)
+                .drawBehind {
+                    // Compose has no dashed border; draw the rounded
+                    // rect with a dash path effect, inset by half the
+                    // stroke so it is not clipped by the box edge.
+                    val strokeWidth = 1.5.dp.toPx()
+                    val inset = strokeWidth / 2f
+                    drawRoundRect(
+                        color = dashColor,
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - strokeWidth, size.height - strokeWidth),
+                        cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx()),
+                        style = Stroke(
+                            width = strokeWidth,
+                            pathEffect = PathEffect.dashPathEffect(
+                                floatArrayOf(10.dp.toPx(), 7.dp.toPx())
+                            )
+                        )
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "+",
+                color = palette.muted,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Light
+            )
+        }
+        Text(
+            text = "Add",
+            color = palette.muted,
+            fontSize = 10.5.sp,
+            modifier = Modifier.padding(top = 5.dp)
+        )
+    }
+}
+
+/**
+ * The tile editor sheet (v1.2), hosted like VpnSheet: a name field,
+ * an address field, a live preview of the tile's letter disc, and
+ * Save. A scheme-less address gets https:// in front on save.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpeedDialEditorSheet(
+    initial: SpeedDialTile?,
+    onDismiss: () -> Unit,
+    onSave: (SpeedDialTile) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    val sheetState = rememberModalBottomSheetState()
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var address by remember { mutableStateOf(initial?.url ?: "") }
+
+    val trimmedName = name.trim()
+    // The colour the saved tile will wear: the theme accent for the
+    // seeded tiles (colorIndex < 0), else the colour hashed from the
+    // name being typed — the preview below shows it live.
+    val previewColorIndex = when {
+        initial != null && initial.colorIndex < 0 -> -1
+        trimmedName.isEmpty() -> 0
+        else -> speedDialColorIndex(trimmedName)
+    }
+    val previewColor = if (previewColorIndex < 0) {
+        colors.primary
+    } else {
+        SPEED_DIAL_COLORS[previewColorIndex]
+    }
+    val previewGlyph = when {
+        initial?.glyph == "▶" -> "▶"
+        trimmedName.isNotEmpty() -> trimmedName.first().uppercase()
+        else -> "?"
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colors.surface,
+        contentColor = colors.onSurface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 26.dp)
+        ) {
+            Text(
+                text = if (initial == null) "Add to Speed Dial" else "Edit tile",
+                color = colors.onSurface,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+            )
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it },
+                label = { Text("Address") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Done,
+                    autoCorrectEnabled = false
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+            )
+            Row(
+                modifier = Modifier.padding(top = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(previewColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = previewGlyph,
+                        color = if (previewColorIndex < 0) {
+                            palette.onAccent
+                        } else {
+                            Color(0xFF14212E)
+                        },
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "The tile takes the first letter of the name, " +
+                        "in a colour of its own.",
+                    color = palette.muted,
+                    fontSize = 12.sp
+                )
+            }
+            Button(
+                onClick = {
+                    onSave(
+                        SpeedDialTile(
+                            name = trimmedName,
+                            url = normalizeSpeedDialUrl(address),
+                            glyph = if (initial?.glyph == "▶") {
+                                "▶"
+                            } else {
+                                trimmedName.firstOrNull()?.uppercase() ?: ""
+                            },
+                            colorIndex = if (initial != null && initial.colorIndex < 0) {
+                                -1
+                            } else {
+                                speedDialColorIndex(trimmedName)
+                            }
+                        )
+                    )
+                },
+                enabled = trimmedName.isNotEmpty() && address.isNotBlank(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.primary,
+                    contentColor = palette.onAccent
+                )
+            ) {
+                Text(text = "Save tile", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** Glyph colours for Mazeen's own tiles — the mockups' pastel set. */
+private val SPEED_DIAL_COLORS = listOf(
+    Color(0xFFFBBF24), // amber
+    Color(0xFFF87171), // coral
+    Color(0xFF34D399), // green
+    Color(0xFF38BDF8), // sky
+    Color(0xFFA78BFA), // violet
+    Color(0xFFF472B6)  // pink
+)
+
+/** A tile's colour slot, hashed deterministically from its name. */
+private fun speedDialColorIndex(name: String): Int {
+    val size = SPEED_DIAL_COLORS.size
+    val hash = name.trim().lowercase().hashCode()
+    return ((hash % size) + size) % size
+}
+
+/** The colour a stored tile's glyph is drawn in. */
+private fun speedDialGlyphColor(tile: SpeedDialTile, accent: Color): Color {
+    if (tile.colorIndex < 0) return accent
+    val size = SPEED_DIAL_COLORS.size
+    return SPEED_DIAL_COLORS[((tile.colorIndex % size) + size) % size]
+}
+
+/**
+ * Address normalization for the tile editor: a full URL (anything
+ * with a scheme) passes through untouched; anything else gets
+ * https:// in front — dotted or not, it's his browser.
+ */
+private fun normalizeSpeedDialUrl(raw: String): String {
+    val input = raw.trim()
+    return if (input.contains("://")) input else "https://$input"
 }
