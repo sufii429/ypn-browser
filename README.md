@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.1.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.1.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -130,6 +130,14 @@ Home quick tiles are the mockup's taller Speed Dial tiles, the
 Menu's Appearance group picks themes by accent swatches, the
 acceleration icon sits at the top of its row, and the Home/Menu
 footers say 1.1.
+
+**1.1.2:** a real launcher icon, replacing the mockup-era shield.
+Mazeen's chosen artwork, traced as a vector adaptive icon: on a
+deep-navy field, Wi-Fi arcs and five ascending mobile-signal bars
+both feed one curved download arrow — the dual-network USP as a
+glyph. The Home footer now carries the name's meaning as its
+tagline: "YPN · Your Personal Network — two networks, one fast
+download." (YPN = Your Personal Network, Mazeen's own expansion.)
 
 ## Themes
 

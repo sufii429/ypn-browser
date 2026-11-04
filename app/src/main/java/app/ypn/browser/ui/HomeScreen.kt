@@ -110,7 +110,7 @@ fun HomeScreen(
         DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
         QuickTiles(onNavigate = onNavigate)
         Text(
-            text = "YPN Browser 1.1 — browsing, built-in VPN and dual-network downloads.",
+            text = "YPN · Your Personal Network — two networks, one fast download.",
             color = LocalYpnPalette.current.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)

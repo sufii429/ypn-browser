@@ -242,7 +242,7 @@ private fun MenuRoot(
         }
 
         Text(
-            text = "YPN Browser 1.1 — settings and themes live here, nowhere else.",
+            text = "YPN Browser — settings and themes live here, nowhere else.",
             color = palette.muted,
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 16.dp, top = 14.dp)

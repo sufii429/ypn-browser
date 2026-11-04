@@ -1,17 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Shield with check — the VPN shield from the design mockups. -->
+<!-- Launcher foreground: YPN's dual-network USP, traced as a vector from
+     Mazeen's approved artwork (v1.1.2). On the deep-navy background
+     (ic_launcher_background), Wi-Fi arcs (upper left) and five ascending
+     mobile-signal bars (upper right) both feed one curved download arrow.
+     All strokes are round-capped, like the original. The whole glyph sits
+     in a group scaled 0.8 about the centre so launcher masks (circle,
+     squircle) never clip the arcs or bars. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#22D3EE"
-        android:pathData="M54,14 L86,26 V52 C86,74 70,88 54,94 C38,88 22,74 22,52 V26 Z" />
-    <path
-        android:strokeColor="#06222B"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M40,52 L50,62 L69,42" />
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
+
+        <!-- Wi-Fi arcs: quarter arcs fanning up-left from the focal
+             point (37, 45), radii 12 / 20 / 29. -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#22C3EE"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M25,45 A12,12 0 0 1 37,33" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1FA8F0"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M17,45 A20,20 0 0 1 37,25" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1E96F5"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M8,45 A29,29 0 0 1 37,16" />
+
+        <!-- Mobile-signal bars: five verticals ending at y=61, tops
+             ascending, blues deepening with height. -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#2ED3EE"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M59,61 L59,52" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#27C1F0"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M67,61 L67,43" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#22AEF3"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M75,61 L75,34" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1E9BF5"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M82,61 L82,25" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1E88F5"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:pathData="M90,61 L90,16" />
+
+        <!-- Download arrow: curves in from (41, 42) to a vertical stem
+             at x=54, arrowhead at the tip (54, 90). -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#29C8F2"
+            android:strokeWidth="6.5"
+            android:strokeLineCap="round"
+            android:pathData="M41,42 C48,53 54,58 54,72 L54,88" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#29C8F2"
+            android:strokeWidth="6.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M39,75 L54,90 L69,75" />
+    </group>
 </vector>
