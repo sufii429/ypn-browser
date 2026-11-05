@@ -77,6 +77,16 @@ enum class VpnPhase { OFF, CONNECTING, ON, FAILED }
  * reached ON ([workedHosts], persisted): the VPN screen lists them
  * first and [quickConnectTarget] prefers them over the raw score
  * order.
+ *
+ * v1.3.5: the user's last word is persisted (KEY_USER_WANTS_ON).
+ * Android restarts the sticky SstpVpnService on its own after the
+ * app process dies, and the restarted service redials the stored
+ * profile — so a Disconnect the user pressed could quietly undo
+ * itself while the app was closed (Mazeen's 2026-11-05 report: he
+ * disconnected, closed the browser, and found the VPN connected
+ * again on the next launch). The persisted intent closes that:
+ * any controller that finds a tunnel up while the intent is OFF
+ * takes it down instead of adopting it.
  */
 class VpnController(context: Context) {
 
@@ -123,7 +133,15 @@ class VpnController(context: Context) {
         when (key) {
             OscPrefKey.ROOT_STATE.name ->
                 if (getBooleanPrefValue(OscPrefKey.ROOT_STATE, oscPrefs)) {
-                    refreshDerivedState()
+                    // A tunnel coming up while the user's persisted
+                    // intent is OFF is the system-restarted service
+                    // redialing on its own — honour the Disconnect
+                    // the user actually pressed (v1.3.5).
+                    if (userWantsOn()) {
+                        refreshDerivedState()
+                    } else {
+                        disconnect()
+                    }
                 } else {
                     onServiceStopped()
                 }
@@ -145,7 +163,19 @@ class VpnController(context: Context) {
         }
         oscPrefs.registerOnSharedPreferenceChangeListener(prefListener)
         refreshDerivedState()
+        // Same enforcement at startup (v1.3.5): a tunnel the
+        // restarted service brought up before this controller
+        // existed is taken down when the user's last word was OFF.
+        if (!userWantsOn() &&
+            getBooleanPrefValue(OscPrefKey.ROOT_STATE, oscPrefs)
+        ) {
+            disconnect()
+        }
     }
+
+    /** The user's persisted intent: true only after a Connect. */
+    private fun userWantsOn(): Boolean =
+        storePrefs.getBoolean(KEY_USER_WANTS_ON, false)
 
     /**
      * Begin connecting to [server]. Returns the Android VPN-consent
@@ -167,6 +197,7 @@ class VpnController(context: Context) {
     fun beginConnect() {
         val target = pendingTarget ?: return
         pendingTarget = null
+        storePrefs.edit().putBoolean(KEY_USER_WANTS_ON, true).apply()
         userRequestedStop = false
         failoverArmed = true
         wasConnected = false
@@ -177,6 +208,13 @@ class VpnController(context: Context) {
 
     /** User pressed Disconnect / Cancel. Never triggers failover. */
     fun disconnect() {
+        // Persist the order (v1.3.5): Disconnect is the user's last
+        // word until they press Connect again, across app restarts
+        // too. The stored profile also loses its self-retry
+        // mandate, so a system-restarted service has nothing to
+        // redial on its own (writeProfile restores it per Connect).
+        storePrefs.edit().putBoolean(KEY_USER_WANTS_ON, false).apply()
+        setBooleanPrefValue(false, OscPrefKey.RECONNECTION_ENABLED, oscPrefs)
         userRequestedStop = true
         failoverArmed = false
         pendingTarget = null
@@ -457,5 +495,6 @@ class VpnController(context: Context) {
         const val KEY_SERVERS_CACHE = "vpn_gate_servers"
         const val KEY_LAST_HOST = "vpn_last_host"
         const val KEY_WORKED_HOSTS = "vpn_worked_hosts"
+        const val KEY_USER_WANTS_ON = "vpn_user_wants_on"
     }
 }

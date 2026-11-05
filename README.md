@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.4 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.5 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,13 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.5:** Disconnect is final. Android restarts the sticky VPN
+service on its own after the app closes, and the restarted service
+redialed the stored profile — a pressed Disconnect quietly undid
+itself. The user's intent is now persisted: Connect sets it,
+Disconnect clears it (and strips the stored profile's self-retry
+mandate), and any tunnel found up while the intent is OFF is taken
+down instead of adopted.
 **1.3.4:** address-bar fix — the bar's editing state is now keyed
 by tab, so opening a fresh blank tab no longer shows the previous
 tab's address in the bar.
