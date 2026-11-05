@@ -38,7 +38,16 @@ class DownloadItem(
     val mimeType: String?,
     val userAgent: String?,
     val cookie: String?,
-    val createdAt: Long
+    val createdAt: Long,
+    /**
+     * v1.3: the page that linked to this file, sent as the Referer
+     * header on the probe and on every transfer connection. Hosts
+     * that hand out video files often refuse requests without the
+     * page's referer. Null for downloads enqueued without a page
+     * context (the WebView download listener, pasted URLs) — those
+     * send no Referer, exactly as before.
+     */
+    val referer: String? = null
 ) {
     /** Final file name inside the downloads folder (collision-free). */
     var fileName by mutableStateOf(fileName)

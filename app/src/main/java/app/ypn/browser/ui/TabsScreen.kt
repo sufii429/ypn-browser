@@ -36,7 +36,12 @@ import androidx.compose.ui.unit.sp
 import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 
-/** The real tab list (Phase 1): tap to switch, X to close, + for a new tab. */
+/**
+ * The real tab list (Phase 1): tap to switch, X to close, + for a
+ * new tab. Since v1.3 this grid is no longer a bottom-nav section —
+ * it opens from the top tab strip's ▦ button; system Back returns
+ * to Home via the shell's section BackHandler.
+ */
 @Composable
 fun TabsScreen(
     controller: BrowserController,

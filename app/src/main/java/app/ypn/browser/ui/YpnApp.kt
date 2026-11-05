@@ -1,21 +1,38 @@
 package app.ypn.browser.ui
 
 import android.app.Activity
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Tab
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -28,11 +45,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.ypn.browser.browser.BrowserController
+import app.ypn.browser.browser.BrowserTab
 import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
@@ -64,6 +88,12 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * Since v1.1 this shell also hosts the shared VPN bottom sheet
  * (VpnSheet), opened from the VPN chips on Home and in the browser
  * toolbar.
+ * Since v1.3 the tabs live at the TOP: a scrolling strip of tab
+ * chips tops the Home and Browser sections (see [TabStrip]), the
+ * bottom navigation is Home / Downloads / Menu only, and the Tabs
+ * grid remains as its own section, reached from the strip's grid
+ * button — its TABS enum entry stays for that, it is simply no
+ * longer a bottom-nav destination.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -123,7 +153,11 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = colors.surface) {
-                YpnSection.entries.forEach { section ->
+                // v1.3: TABS is not a bottom-nav destination anymore
+                // (the top strip + its grid button own tabs now).
+                YpnSection.entries
+                    .filter { it != YpnSection.TABS }
+                    .forEach { section ->
                     val isSelected = section == selected
                     NavigationBarItem(
                         selected = isSelected,
@@ -177,24 +211,38 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             onConnectRequest = onVpnConnectRequest,
                             onBack = { showVpn = false }
                         )
-                    } else if (controller.browsing) {
-                        BrowserScreen(
-                            controller = controller,
-                            onHome = { controller.browsing = false },
-                            vpn = vpn,
-                            onVpnSheetOpen = { vpnSheetOpen = true }
-                        )
                     } else {
-                        HomeScreen(
-                            tabCount = controller.tabs.size,
-                            onNavigate = { controller.openInNewTab(it) },
-                            vpn = vpn,
-                            onVpnOpen = { showVpn = true },
-                            onVpnConnectRequest = onVpnConnectRequest,
-                            onVpnSheetOpen = { vpnSheetOpen = true },
-                            downloads = downloads,
-                            onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
-                        )
+                        // v1.3: the tab strip tops both the Home and
+                        // the Browser views; the VPN screen above
+                        // keeps its own full-screen chrome.
+                        Column(Modifier.fillMaxSize()) {
+                            TabStrip(
+                                controller = controller,
+                                onTabsGrid = { selected = YpnSection.TABS }
+                            )
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
+                                if (controller.browsing) {
+                                    BrowserScreen(
+                                        controller = controller,
+                                        onHome = { controller.browsing = false },
+                                        vpn = vpn,
+                                        onVpnSheetOpen = { vpnSheetOpen = true },
+                                        downloads = downloads
+                                    )
+                                } else {
+                                    HomeScreen(
+                                        tabCount = controller.tabs.size,
+                                        onNavigate = { controller.openInNewTab(it) },
+                                        vpn = vpn,
+                                        onVpnOpen = { showVpn = true },
+                                        onVpnConnectRequest = onVpnConnectRequest,
+                                        onVpnSheetOpen = { vpnSheetOpen = true },
+                                        downloads = downloads,
+                                        onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 YpnSection.TABS -> TabsScreen(
@@ -232,4 +280,134 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * v1.3's top tab strip: the open tabs as a horizontally scrolling
+ * row of chips in the Vivaldi / desktop-Chrome position, topping
+ * the Home and Browser sections. One chip per tab — its page title,
+ * else the page's host, else "New tab" — the active chip filled and
+ * underlined with the accent; every chip carries its own ✕ (the
+ * controller's close picks the neighbouring tab, exactly as in the
+ * Tabs grid); tapping a chip switches to it and shows the browser.
+ * At the row's end: ▦ opens the Tabs grid, + opens a new tab through
+ * the same flow the grid uses. With zero tabs the row is just those
+ * two buttons — the controller allows an empty tab list (closing
+ * the last tab leaves the browser for Home), so the strip never has
+ * to invent a tab.
+ */
+@Composable
+private fun TabStrip(
+    controller: BrowserController,
+    onTabsGrid: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.surface)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LazyRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items(controller.tabs, key = { it.id }) { tab ->
+                TabChip(
+                    label = tabStripLabel(tab),
+                    active = tab.id == controller.activeTabId,
+                    onClick = { controller.selectTab(tab.id) },
+                    onClose = { controller.closeTab(tab.id) }
+                )
+            }
+        }
+        IconButton(onClick = onTabsGrid, modifier = Modifier.size(32.dp)) {
+            Icon(
+                imageVector = Icons.Filled.GridView,
+                contentDescription = "All tabs",
+                tint = palette.muted,
+                modifier = Modifier.size(17.dp)
+            )
+        }
+        IconButton(
+            onClick = {
+                controller.newTab(null)
+                controller.browsing = true
+            },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = "New tab",
+                tint = colors.primary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/** One tab chip in the strip (see [TabStrip]). */
+@Composable
+private fun TabChip(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    onClose: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Column(
+        modifier = Modifier
+            .widthIn(max = 150.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (active) palette.surface2 else colors.background)
+            .border(
+                1.dp,
+                if (active) colors.primary else colors.outline,
+                RoundedCornerShape(9.dp)
+            )
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = if (active) colors.onSurface else palette.muted,
+                fontSize = 12.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            IconButton(onClick = onClose, modifier = Modifier.size(20.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Close tab",
+                    tint = palette.muted,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
+        if (active) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(colors.primary)
+            )
+        }
+    }
+}
+
+/** A chip's text: the page title, else its host, else "New tab". */
+private fun tabStripLabel(tab: BrowserTab): String {
+    val title = tab.title.trim()
+    if (title.isNotEmpty() && title != "New Tab") return title
+    val host = Uri.parse(tab.currentUrl).host?.takeIf { it.isNotBlank() }
+    return host ?: "New tab"
 }

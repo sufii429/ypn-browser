@@ -767,17 +767,23 @@ private fun SpeedDialCell(
                 modifier = Modifier.padding(top = 5.dp)
             )
         }
-        DropdownMenu(expanded = menuExpanded, onDismissRequest = onMenuDismiss) {
+        // v1.3: the menu wears the theme — until now it fell back to
+        // the stock Material surface (a dark plum on every theme).
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = onMenuDismiss,
+            containerColor = colors.surface
+        ) {
             DropdownMenuItem(
-                text = { Text("Open") },
+                text = { Text("Open", color = colors.onSurface) },
                 onClick = onOpen
             )
             DropdownMenuItem(
-                text = { Text("Edit") },
+                text = { Text("Edit", color = colors.onSurface) },
                 onClick = onEdit
             )
             DropdownMenuItem(
-                text = { Text("Remove") },
+                text = { Text("Remove", color = colors.onSurface) },
                 onClick = onRemove
             )
         }

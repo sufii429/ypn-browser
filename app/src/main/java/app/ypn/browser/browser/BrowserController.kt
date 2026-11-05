@@ -5,12 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -24,6 +27,25 @@ import app.ypn.browser.data.SavedPage
 import app.ypn.browser.download.DownloadController
 import java.net.URLEncoder
 
+/** What the v1.3 fetcher recognised in a page's requests. */
+enum class MediaKind { VIDEO_FILE, HLS }
+
+/**
+ * One media candidate the fetcher sniffed on a tab's current page
+ * (v1.3): a direct video file or an HLS playlist the page pulled
+ * while loading/streaming. [pageUrl] is the page that referenced it
+ * — later sent as the download's Referer.
+ */
+class MediaItem(
+    val url: String,
+    val kind: MediaKind,
+    val pageUrl: String,
+    val firstSeenAt: Long
+)
+
+/** A pending link long-press menu (v1.3), raised by a WebView. */
+class LinkMenuRequest(val url: String, val pageUrl: String)
+
 /** One browser tab. Its WebView lives in the controller's map, not here. */
 class BrowserTab(val id: Int) {
     var title by mutableStateOf("New Tab")
@@ -31,6 +53,21 @@ class BrowserTab(val id: Int) {
     var progress by mutableIntStateOf(0)
     var canGoBack by mutableStateOf(false)
     var canGoForward by mutableStateOf(false)
+
+    /**
+     * Media this tab's current page has pulled so far (v1.3
+     * fetcher), in first-seen order, deduped by URL and capped —
+     * see [BrowserController.recordMediaCandidate]. Reset when the
+     * tab navigates to a different page: the list always describes
+     * THIS page. Written from WebView request threads and read by
+     * Compose, so every access is guarded by [mediaLock] (the list
+     * itself is snapshot state, so the UI still recomposes).
+     */
+    val media = mutableStateListOf<MediaItem>()
+    val mediaLock = Any()
+
+    /** The page [media] belongs to; a different URL resets the list. */
+    var mediaPageUrl: String? = null
 
     /**
      * True once this tab's first page has actually committed (painted
@@ -53,7 +90,9 @@ class BrowserTab(val id: Int) {
  * tab's WebView is pre-warmed at app start since Phase 4, the rest
  * are created lazily), bookmarks, history and the global desktop-mode
  * flag. Everything Compose reads is snapshot state, so the UI stays
- * in sync with WebView callbacks.
+ * in sync with WebView callbacks. Since v1.3 it also carries the
+ * per-tab media the fetcher sniffed (see [BrowserTab.media]) and
+ * the pending link long-press menu ([linkMenu]).
  */
 class BrowserController(context: Context, private val downloads: DownloadController) {
 
@@ -74,6 +113,22 @@ class BrowserController(context: Context, private val downloads: DownloadControl
     private var nextTabId = 1
 
     val activeTab: BrowserTab? get() = tabs.firstOrNull { it.id == activeTabId }
+
+    /**
+     * The link long-press menu waiting to be shown (v1.3), set by a
+     * tab's WebView when a link (or image-link) is held; the browser
+     * screen renders the sheet and clears this when it closes.
+     */
+    var linkMenu by mutableStateOf<LinkMenuRequest?>(null)
+
+    /**
+     * The user agent the WebViews are currently sending (v1.3),
+     * captured whenever a WebView's settings are applied. Page-picked
+     * downloads (fetcher, link menu) present this same UA so hosts
+     * see the browser, not a bare HTTP client.
+     */
+    var lastUserAgent: String? = null
+        private set
 
     init {
         bookmarks.addAll(store.loadBookmarks())
@@ -122,6 +177,26 @@ class BrowserController(context: Context, private val downloads: DownloadControl
         }
     }
 
+    /**
+     * Link menu's "Open in background tab" (v1.3): a fresh tab
+     * loads [url] WITHOUT stealing focus — the active tab (and what
+     * is on screen) stays exactly as it is. The new tab's WebView is
+     * created lazily when the tab is first shown; until then the
+     * URL waits in [BrowserTab.pendingUrl]. If somehow no tab is
+     * active, the new tab becomes the active one instead.
+     */
+    fun openInBackgroundTab(url: String) {
+        if (url.isBlank()) return
+        val tab = BrowserTab(nextTabId++)
+        tab.pendingUrl = url
+        tab.currentUrl = url
+        tabs.add(tab)
+        if (activeTabId == null) {
+            activeTabId = tab.id
+            browsing = true
+        }
+    }
+
     fun closeTab(id: Int) {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -134,6 +209,53 @@ class BrowserController(context: Context, private val downloads: DownloadControl
         } else if (wasActive) {
             activeTabId = tabs[minOf(index, tabs.lastIndex)].id
         }
+    }
+
+    // ---------- Media fetcher (v1.3) ----------
+
+    /**
+     * The fetcher's ear: called from the WebViewClient for every
+     * subresource request a page makes. A request whose path (query
+     * and fragment stripped, case folded) ends in a direct-video
+     * extension is a [MediaKind.VIDEO_FILE]; an .m3u8 is
+     * [MediaKind.HLS]. Segment files (.ts) and everything else are
+     * ignored. First sight of a URL wins; the per-tab list is
+     * capped at [MAX_MEDIA_PER_TAB]. Recording never touches the
+     * response — the caller always returns null.
+     */
+    private fun recordMediaCandidate(tab: BrowserTab, url: String) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        val kind = when {
+            path.endsWith(".mp4") || path.endsWith(".webm") ||
+                path.endsWith(".mkv") -> MediaKind.VIDEO_FILE
+            path.endsWith(".m3u8") -> MediaKind.HLS
+            else -> return
+        }
+        synchronized(tab.mediaLock) {
+            if (tab.media.any { it.url == url }) return
+            if (tab.media.size >= MAX_MEDIA_PER_TAB) return
+            tab.media.add(
+                MediaItem(
+                    url = url,
+                    kind = kind,
+                    pageUrl = tab.currentUrl,
+                    firstSeenAt = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    /**
+     * The fetcher's page rule: the media list describes the tab's
+     * CURRENT page, so a main-frame navigation to a different URL
+     * empties it (a reload of the same URL keeps it). Called from
+     * onPageStarted.
+     */
+    private fun resetMediaForPage(tab: BrowserTab, url: String) {
+        if (tab.mediaPageUrl == url) return
+        tab.mediaPageUrl = url
+        synchronized(tab.mediaLock) { tab.media.clear() }
     }
 
     // ---------- Navigation ----------
@@ -234,6 +356,9 @@ class BrowserController(context: Context, private val downloads: DownloadControl
 
     private fun applyDesktopSettings(wv: WebView) {
         wv.settings.userAgentString = if (desktopMode) DESKTOP_UA else null
+        // Remember what the WebViews actually send (v1.3): downloads
+        // picked out of a page present this same user agent.
+        lastUserAgent = wv.settings.userAgentString
     }
 
     // ---------- WebView lifecycle ----------
@@ -304,8 +429,26 @@ class BrowserController(context: Context, private val downloads: DownloadControl
         }
         applyDesktopSettings(wv)
         wv.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                // v1.3 fetcher: watch (never touch) what the page
+                // pulls. Main-frame requests ARE the page, not its
+                // media, so they are skipped. Returning null lets
+                // the WebView load every request exactly as before.
+                if (request?.isForMainFrame != true) {
+                    request?.url?.toString()?.let { recordMediaCandidate(tab, it) }
+                }
+                return null
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                if (url != null) tab.currentUrl = url
+                if (url != null) {
+                    tab.currentUrl = url
+                    // A new page means a new media list (fetcher).
+                    resetMediaForPage(tab, url)
+                }
                 tab.canGoBack = view?.canGoBack() == true
                 tab.canGoForward = view?.canGoForward() == true
             }
@@ -372,6 +515,55 @@ class BrowserController(context: Context, private val downloads: DownloadControl
                 resultMsg: Message?
             ): Boolean = false // pop-ups stay blocked
         }
+        // v1.3 link menu: holding a link — or an image wrapped in a
+        // link — raises the link sheet (the browser screen renders
+        // it from [linkMenu]). Any other hit is NOT consumed
+        // (returns false), so long-press text selection and other
+        // page gestures keep their stock behaviour.
+        wv.setOnLongClickListener {
+            val hit = wv.hitTestResult
+            when (hit.type) {
+                WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
+                    val url = hit.extra
+                    if (!url.isNullOrBlank()) {
+                        linkMenu = LinkMenuRequest(url, tab.currentUrl)
+                        true
+                    } else {
+                        false
+                    }
+                }
+                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                    // Here hit.extra is the IMAGE url; the menu wants
+                    // the wrapping link's href, which the WebView
+                    // reports through requestFocusNodeHref ("url" in
+                    // the reply data; "src" is the image itself). If
+                    // no href comes back, the image url stands in.
+                    try {
+                        val reply = Message()
+                        reply.target = Handler(Looper.getMainLooper()) { msg ->
+                            val found = msg.data.getString("url")
+                                ?: msg.data.getString("src")
+                                ?: hit.extra
+                            if (!found.isNullOrBlank()) {
+                                linkMenu = LinkMenuRequest(found, tab.currentUrl)
+                            }
+                            true
+                        }
+                        wv.requestFocusNodeHref(reply)
+                        true
+                    } catch (e: Exception) {
+                        val url = hit.extra
+                        if (!url.isNullOrBlank()) {
+                            linkMenu = LinkMenuRequest(url, tab.currentUrl)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+                else -> false
+            }
+        }
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             if (url.isNullOrBlank()) return@setDownloadListener
             // Session cookies travel with the download so logged-in
@@ -393,6 +585,9 @@ class BrowserController(context: Context, private val downloads: DownloadControl
 
     companion object {
         private const val MAX_HISTORY = 500
+
+        /** Fetcher cap: at most this many media candidates per page. */
+        private const val MAX_MEDIA_PER_TAB = 30
 
         private const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +

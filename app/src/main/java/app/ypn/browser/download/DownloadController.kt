@@ -219,7 +219,8 @@ class DownloadController private constructor(context: Context) {
             suggestedName = deriveFileName(url, contentDisposition),
             mimeType = mimeType,
             userAgent = userAgent,
-            cookie = cookie
+            cookie = cookie,
+            referer = null
         )
     }
 
@@ -231,9 +232,36 @@ class DownloadController private constructor(context: Context) {
             suggestedName = deriveFileName(url, null),
             mimeType = null,
             userAgent = null,
-            cookie = null
+            cookie = null,
+            referer = null
         )
         return true
+    }
+
+    /**
+     * v1.3: enqueue a file the user picked out of a web page — a
+     * video the fetcher sniffed, or a link from the long-press menu.
+     * These downloads carry the page as [referer] (many file hosts
+     * refuse referer-less requests) and the browser's own
+     * [userAgent]; [cookie] is the session cookie for the file's
+     * host when the caller could read one, so logged-in links keep
+     * working. The name comes from the URL path via the same
+     * [deriveFileName] rule as every other download.
+     */
+    fun enqueueMedia(
+        url: String,
+        referer: String?,
+        userAgent: String?,
+        cookie: String? = null
+    ) {
+        enqueue(
+            url = url,
+            suggestedName = deriveFileName(url, null),
+            mimeType = null,
+            userAgent = userAgent,
+            cookie = cookie,
+            referer = referer
+        )
     }
 
     private fun enqueue(
@@ -241,7 +269,8 @@ class DownloadController private constructor(context: Context) {
         suggestedName: String,
         mimeType: String?,
         userAgent: String?,
-        cookie: String?
+        cookie: String?,
+        referer: String?
     ) {
         val item = DownloadItem(
             id = UUID.randomUUID().toString(),
@@ -250,7 +279,8 @@ class DownloadController private constructor(context: Context) {
             mimeType = mimeType,
             userAgent = userAgent,
             cookie = cookie,
-            createdAt = System.currentTimeMillis()
+            createdAt = System.currentTimeMillis(),
+            referer = referer
         )
         items.add(0, item)
         persist()
@@ -1010,6 +1040,13 @@ class DownloadController private constructor(context: Context) {
         conn.setRequestProperty("User-Agent", item.userAgent ?: DEFAULT_UA)
         item.cookie?.takeIf { it.isNotBlank() }?.let {
             conn.setRequestProperty("Cookie", it)
+        }
+        // v1.3: page-enqueued downloads (fetcher / link menu) carry
+        // the linking page as Referer — on this connection factory,
+        // so the probe, the chunk workers and the single-stream
+        // fallback all send it.
+        item.referer?.takeIf { it.isNotBlank() }?.let {
+            conn.setRequestProperty("Referer", it)
         }
         return conn to network
     }

@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.2.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -155,6 +155,23 @@ the bottom), with the VPN card, download card and tiles slightly
 translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
+
+**1.3.0:** tabs move to the top, and pages give up their videos.
+A scrolling strip of tab chips now tops the Home and Browser
+sections — tap to switch, ✕ to close, + for a new tab, ▦ for the
+tab grid (which leaves the bottom navigation: Home / Downloads /
+Menu). Holding a link in a page opens a themed sheet: open in a
+new tab, open in a background tab, copy, or download the link.
+Dropdown menus wear the active theme's surface at last. And the
+video fetcher: while a page plays a video, the streams it pulls
+are collected per page; a badge-counted button in the address bar
+opens "Videos on this page" — direct video files (MP4 / WEBM /
+MKV) with the quality read from the URL where one is written
+there and the size probed on the spot, HLS playlists openable
+into the quality list inside them (informational; no HLS
+downloading yet). File downloads picked this way carry the page
+as referer and the browser's own user agent, and run on the
+existing dual-network engine with pause and resume.
 
 ## Themes
 

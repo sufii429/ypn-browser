@@ -39,7 +39,8 @@ class DownloadStore(context: Context) {
                     mimeType = o.optString("mime").ifEmpty { null },
                     userAgent = o.optString("ua").ifEmpty { null },
                     cookie = o.optString("cookie").ifEmpty { null },
-                    createdAt = o.optLong("created")
+                    createdAt = o.optLong("created"),
+                    referer = o.optString("referer").ifEmpty { null }
                 )
                 item.totalBytes = o.optLong("total", -1L)
                 item.downloadedBytes = o.optLong("downloaded", 0L)
@@ -88,6 +89,7 @@ class DownloadStore(context: Context) {
                 .put("mime", item.mimeType ?: "")
                 .put("ua", item.userAgent ?: "")
                 .put("cookie", item.cookie ?: "")
+                .put("referer", item.referer ?: "")
                 .put("created", item.createdAt)
                 .put("total", item.totalBytes)
                 .put("downloaded", item.downloadedBytes)

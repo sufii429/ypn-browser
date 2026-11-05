@@ -1,6 +1,8 @@
 package app.ypn.browser.ui
 
 import android.net.Uri
+import android.webkit.CookieManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -42,8 +46,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.ypn.browser.browser.BrowserController
 import app.ypn.browser.browser.BrowserTab
+import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.vpn.VpnController
 
@@ -72,6 +79,12 @@ import app.ypn.browser.vpn.VpnController
  * under the toolbar is a thin 3dp line — both read the tab's real
  * [BrowserTab.isLoading] / [BrowserTab.progress] state, which the
  * controller feeds from the WebView's own callbacks.
+ *
+ * v1.3 additions: when the active tab's page has pulled video, a
+ * fetcher button (download arrow + orange count badge) sits inside
+ * the address bar just before the VPN chip and opens the media
+ * sheet; and the link long-press sheet the controller raises is
+ * hosted here, above the page. Both sheets live in MediaSheet.kt.
  */
 @Composable
 fun BrowserScreen(
@@ -79,11 +92,14 @@ fun BrowserScreen(
     onHome: () -> Unit,
     vpn: VpnController,
     onVpnSheetOpen: () -> Unit,
+    downloads: DownloadController,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
     val surfaceArgb = colors.surface.toArgb()
     val tab = controller.activeTab
+    val context = LocalContext.current
+    var mediaSheetOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -95,7 +111,8 @@ fun BrowserScreen(
             tab = tab,
             onHome = onHome,
             vpn = vpn,
-            onVpnSheetOpen = onVpnSheetOpen
+            onVpnSheetOpen = onVpnSheetOpen,
+            onMediaClick = { mediaSheetOpen = true }
         )
         if (tab != null && tab.isLoading) {
             // Directly under the toolbar's address bar: a thin (3dp,
@@ -137,6 +154,57 @@ fun BrowserScreen(
                 }
             }
         }
+    }
+
+    // v1.3 fetcher sheet: the streams the active tab's page pulled.
+    // Downloads go through the engine carrying the page as referer,
+    // the browser's UA and the file host's session cookie.
+    if (mediaSheetOpen && tab != null) {
+        MediaSheet(
+            tab = tab,
+            userAgent = controller.lastUserAgent,
+            onDismissRequest = { mediaSheetOpen = false },
+            onDownload = { item ->
+                downloads.enqueueMedia(
+                    url = item.url,
+                    referer = item.pageUrl.ifBlank { null },
+                    userAgent = controller.lastUserAgent,
+                    cookie = runCatching {
+                        CookieManager.getInstance().getCookie(item.url)
+                    }.getOrNull()
+                )
+                Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                mediaSheetOpen = false
+            }
+        )
+    }
+
+    // v1.3 link long-press sheet, raised by a tab's WebView hit test.
+    controller.linkMenu?.let { request ->
+        LinkMenuSheet(
+            request = request,
+            onDismissRequest = { controller.linkMenu = null },
+            onOpenInNewTab = {
+                controller.linkMenu = null
+                controller.newTab(request.url)
+            },
+            onOpenInBackgroundTab = {
+                controller.linkMenu = null
+                controller.openInBackgroundTab(request.url)
+            },
+            onDownloadLink = {
+                controller.linkMenu = null
+                downloads.enqueueMedia(
+                    url = request.url,
+                    referer = request.pageUrl.ifBlank { null },
+                    userAgent = controller.lastUserAgent,
+                    cookie = runCatching {
+                        CookieManager.getInstance().getCookie(request.url)
+                    }.getOrNull()
+                )
+                Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 }
 
@@ -198,7 +266,8 @@ private fun BrowserToolbar(
     tab: BrowserTab?,
     onHome: () -> Unit,
     vpn: VpnController,
-    onVpnSheetOpen: () -> Unit
+    onVpnSheetOpen: () -> Unit,
+    onMediaClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
@@ -312,6 +381,41 @@ private fun BrowserToolbar(
                 }
             )
             Spacer(Modifier.width(6.dp))
+            if (tab != null && tab.media.isNotEmpty()) {
+                // v1.3 fetcher: the page pulled video — the count
+                // badge wears the mockup's orange, on purpose not a
+                // palette colour (it is a "found something" signal,
+                // not chrome). Tapping opens the media sheet.
+                IconButton(
+                    onClick = onMediaClick,
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Box {
+                        Icon(
+                            imageVector = Icons.Filled.Download,
+                            contentDescription = "Videos on this page",
+                            tint = colors.primary,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 8.dp, y = (-6).dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color(0xFFFB923C))
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            Text(
+                                text = tab.media.size.toString(),
+                                color = Color(0xFF231203),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
+            }
             VpnChip(vpn = vpn, onClick = onVpnSheetOpen)
         }
 
