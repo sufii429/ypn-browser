@@ -40,8 +40,11 @@ class DownloadStore(context: Context) {
                     userAgent = o.optString("ua").ifEmpty { null },
                     cookie = o.optString("cookie").ifEmpty { null },
                     createdAt = o.optLong("created"),
-                    referer = o.optString("referer").ifEmpty { null }
+                    referer = o.optString("referer").ifEmpty { null },
+                    hls = o.optBoolean("hls", false)
                 )
+                item.hlsSegmentsDone = o.optInt("hlsDone", 0)
+                item.hlsSegmentCount = o.optInt("hlsCount", 0)
                 item.totalBytes = o.optLong("total", -1L)
                 item.downloadedBytes = o.optLong("downloaded", 0L)
                 item.wifiBytes = o.optLong("wifi", 0L)
@@ -90,6 +93,9 @@ class DownloadStore(context: Context) {
                 .put("ua", item.userAgent ?: "")
                 .put("cookie", item.cookie ?: "")
                 .put("referer", item.referer ?: "")
+                .put("hls", item.hls)
+                .put("hlsDone", item.hlsSegmentsDone)
+                .put("hlsCount", item.hlsSegmentCount)
                 .put("created", item.createdAt)
                 .put("total", item.totalBytes)
                 .put("downloaded", item.downloadedBytes)

@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,16 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.2:** the tab strip moves into the Scaffold's top bar, where a
+loading page cannot cover it (its theme colour now runs behind the
+status bar too). The fetcher's size probes send the site's own
+cookies, so CDN-guarded sizes resolve instead of staying "unknown".
+HLS qualities are downloadable at last: the engine joins a picked
+variant's segments into one .ts file, a resume continues from the
+next unwritten segment, and an encrypted stream refuses honestly
+instead of producing an unplayable file. And the 480p lock: direct
+links whose URL writes a quality at 480p or below are no longer
+fetched, and HLS quality lists hide those variants too.
 **1.3.1:** build fix — three `Modifier.padding(horizontal = …, top = …)`
 calls in MediaSheet.kt used an overload that does not exist; rewritten
 as `start/end/top`. No behaviour change from 1.3.0.

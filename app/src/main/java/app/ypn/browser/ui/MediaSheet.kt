@@ -3,6 +3,7 @@ package app.ypn.browser.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -78,8 +79,11 @@ import java.util.Locale
  * read from its URL when one is written there, a lazily probed size,
  * and a Download button that hands the file to the download engine
  * (with the page as referer). HLS playlists open into the quality
- * list inside them — informational in this version, no HLS
- * downloading.
+ * list inside them; since v1.3.2 each variant there downloads too
+ * (the engine joins its segments into one .ts file). Since v1.3.2
+ * the size probe and the playlist fetch also send the site's own
+ * cookies — some CDNs refuse a cookieless probe outright, which
+ * used to leave every size at "Size unknown".
  */
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -191,7 +195,8 @@ fun MediaSheet(
     tab: BrowserTab,
     userAgent: String?,
     onDismissRequest: () -> Unit,
-    onDownload: (MediaItem) -> Unit
+    onDownload: (MediaItem) -> Unit,
+    onDownloadHls: (variantUrl: String, quality: String?, referer: String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
@@ -348,44 +353,77 @@ fun MediaSheet(
                         fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
                     )
-                    else -> LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                            .padding(top = 6.dp)
-                    ) {
-                        items(variants!!, key = { it.url }) { variant ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        text = variant.quality ?: "Variant",
-                                        color = colors.onSurface,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = variant.bandwidth?.let {
-                                            String.format(
-                                                Locale.US,
-                                                "≈ %.1f Mbps · HLS variant",
-                                                it / 1_000_000.0
+                    else -> {
+                        // v1.3.2: the 480p lock applies inside HLS
+                        // lists too — variants at 480p or below are
+                        // hidden. A variant whose playlist wrote no
+                        // RESOLUTION stays: its quality is unknowable,
+                        // not known-low.
+                        val visibleVariants = variants!!.filter { variant ->
+                            val height = variant.quality
+                                ?.removeSuffix("p")?.toIntOrNull()
+                            height == null || height > 480
+                        }
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 400.dp)
+                                .padding(top = 6.dp)
+                        ) {
+                            items(visibleVariants, key = { it.url }) { variant ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = variant.quality ?: "Variant",
+                                            color = colors.onSurface,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = variant.bandwidth?.let {
+                                                String.format(
+                                                    Locale.US,
+                                                    "≈ %.1f Mbps · HLS variant",
+                                                    it / 1_000_000.0
+                                                )
+                                            } ?: "HLS variant",
+                                            color = palette.muted,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(top = 1.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Button(
+                                        onClick = {
+                                            onDownloadHls(
+                                                variant.url,
+                                                variant.quality,
+                                                hls.pageUrl
                                             )
-                                        } ?: "HLS variant",
-                                        color = palette.muted,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(top = 1.dp)
-                                    )
+                                        },
+                                        shape = RoundedCornerShape(9.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = colors.primary,
+                                            contentColor = palette.onAccent
+                                        )
+                                    ) {
+                                        Text(
+                                            text = "Download",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
+                                HorizontalDivider(
+                                    color = colors.outline,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
                             }
-                            HorizontalDivider(
-                                color = colors.outline,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
                         }
                     }
                 }
@@ -526,8 +564,13 @@ private fun mediaDisplayName(url: String): String {
 
 /**
  * One connection for a media probe/fetch: the browser's own UA (when
- * known) plus the page as Referer — the two headers file hosts most
- * often demand. Mirrors what the download engine sends.
+ * known), the page as Referer, and — since v1.3.2 — the site's own
+ * session cookie for this URL, read from the WebView's cookie store.
+ * Those are the headers file hosts most often demand; a cookieless
+ * probe was refused by the CDN on the user's test site, leaving
+ * every size "unknown". Mirrors what the download engine sends.
+ * Shared by the size probe and the HLS playlist fetch, so both gain
+ * the cookie from this one place.
  */
 private fun openMediaConnection(
     url: String,
@@ -544,6 +587,10 @@ private fun openMediaConnection(
     if (referer.isNotBlank()) {
         conn.setRequestProperty("Referer", referer)
     }
+    runCatching { CookieManager.getInstance().getCookie(url) }
+        .getOrNull()?.takeIf { it.isNotBlank() }?.let {
+            conn.setRequestProperty("Cookie", it)
+        }
     return conn
 }
 

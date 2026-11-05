@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -93,7 +94,12 @@ private enum class YpnSection(val label: String, val icon: ImageVector) {
  * bottom navigation is Home / Downloads / Menu only, and the Tabs
  * grid remains as its own section, reached from the strip's grid
  * button — its TABS enum entry stays for that, it is simply no
- * longer a bottom-nav destination.
+ * longer a bottom-nav destination. Since v1.3.2 the strip sits in
+ * the Scaffold's topBar slot rather than inside the Home section's
+ * own layout: while it lived in the content column, a page's
+ * first-load window could cover it (and the browser toolbar) until
+ * the page committed; as chrome owned by the Scaffold it is
+ * structurally out of the page's reach.
  */
 @Composable
 fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -151,6 +157,19 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     }
 
     Scaffold(
+        topBar = {
+            // v1.3.2: the tab strip is Scaffold chrome, shown over
+            // the Home section only (the VPN screen keeps its own
+            // full-screen chrome, and Downloads / Menu / the Tabs
+            // grid never carried it). Living here — outside the
+            // section content — a loading page cannot cover it.
+            if (selected == YpnSection.HOME && !showVpn) {
+                TabStrip(
+                    controller = controller,
+                    onTabsGrid = { selected = YpnSection.TABS }
+                )
+            }
+        },
         bottomBar = {
             NavigationBar(containerColor = colors.surface) {
                 // v1.3: TABS is not a bottom-nav destination anymore
@@ -211,38 +230,25 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                             onConnectRequest = onVpnConnectRequest,
                             onBack = { showVpn = false }
                         )
+                    } else if (controller.browsing) {
+                        BrowserScreen(
+                            controller = controller,
+                            onHome = { controller.browsing = false },
+                            vpn = vpn,
+                            onVpnSheetOpen = { vpnSheetOpen = true },
+                            downloads = downloads
+                        )
                     } else {
-                        // v1.3: the tab strip tops both the Home and
-                        // the Browser views; the VPN screen above
-                        // keeps its own full-screen chrome.
-                        Column(Modifier.fillMaxSize()) {
-                            TabStrip(
-                                controller = controller,
-                                onTabsGrid = { selected = YpnSection.TABS }
-                            )
-                            Box(Modifier.weight(1f).fillMaxWidth()) {
-                                if (controller.browsing) {
-                                    BrowserScreen(
-                                        controller = controller,
-                                        onHome = { controller.browsing = false },
-                                        vpn = vpn,
-                                        onVpnSheetOpen = { vpnSheetOpen = true },
-                                        downloads = downloads
-                                    )
-                                } else {
-                                    HomeScreen(
-                                        tabCount = controller.tabs.size,
-                                        onNavigate = { controller.openInNewTab(it) },
-                                        vpn = vpn,
-                                        onVpnOpen = { showVpn = true },
-                                        onVpnConnectRequest = onVpnConnectRequest,
-                                        onVpnSheetOpen = { vpnSheetOpen = true },
-                                        downloads = downloads,
-                                        onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
-                                    )
-                                }
-                            }
-                        }
+                        HomeScreen(
+                            tabCount = controller.tabs.size,
+                            onNavigate = { controller.openInNewTab(it) },
+                            vpn = vpn,
+                            onVpnOpen = { showVpn = true },
+                            onVpnConnectRequest = onVpnConnectRequest,
+                            onVpnSheetOpen = { vpnSheetOpen = true },
+                            downloads = downloads,
+                            onDownloadsOpen = { selected = YpnSection.DOWNLOADS }
+                        )
                     }
                 }
                 YpnSection.TABS -> TabsScreen(
@@ -285,16 +291,21 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
 /**
  * v1.3's top tab strip: the open tabs as a horizontally scrolling
  * row of chips in the Vivaldi / desktop-Chrome position, topping
- * the Home and Browser sections. One chip per tab — its page title,
- * else the page's host, else "New tab" — the active chip filled and
- * underlined with the accent; every chip carries its own ✕ (the
- * controller's close picks the neighbouring tab, exactly as in the
- * Tabs grid); tapping a chip switches to it and shows the browser.
- * At the row's end: ▦ opens the Tabs grid, + opens a new tab through
- * the same flow the grid uses. With zero tabs the row is just those
- * two buttons — the controller allows an empty tab list (closing
- * the last tab leaves the browser for Home), so the strip never has
- * to invent a tab.
+ * the Home and Browser sections. Since v1.3.2 it is hosted in the
+ * Scaffold's topBar slot (see [YpnApp]) — page loading can no
+ * longer cover it — and its surface background is painted BEFORE
+ * the status-bar inset is applied, so the theme colour runs
+ * behind the status bar too while the chips sit below it. One
+ * chip per tab — its page title, else the page's host, else
+ * "New tab" — the active chip filled and underlined with the
+ * accent; every chip carries its own ✕ (the controller's close
+ * picks the neighbouring tab, exactly as in the Tabs grid);
+ * tapping a chip switches to it and shows the browser. At the
+ * row's end: ▦ opens the Tabs grid, + opens a new tab through
+ * the same flow the grid uses. With zero tabs the row is just
+ * those two buttons — the controller allows an empty tab list
+ * (closing the last tab leaves the browser for Home), so the
+ * strip never has to invent a tab.
  */
 @Composable
 private fun TabStrip(
@@ -307,6 +318,7 @@ private fun TabStrip(
         modifier = Modifier
             .fillMaxWidth()
             .background(colors.surface)
+            .statusBarsPadding()
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

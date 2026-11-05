@@ -14,6 +14,8 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
@@ -264,13 +266,40 @@ class DownloadController private constructor(context: Context) {
         )
     }
 
+    /**
+     * v1.3.2: enqueue one HLS variant the user picked in the media
+     * sheet. [url] is the variant's media playlist; the engine joins
+     * its segments into a single MPEG-TS file under [suggestedName]
+     * (the caller names it .ts). Carries the same referer / UA /
+     * cookie trio as [enqueueMedia] — segment requests go out with
+     * exactly those headers.
+     */
+    fun enqueueHls(
+        url: String,
+        suggestedName: String,
+        referer: String?,
+        userAgent: String?,
+        cookie: String? = null
+    ) {
+        enqueue(
+            url = url,
+            suggestedName = suggestedName,
+            mimeType = null,
+            userAgent = userAgent,
+            cookie = cookie,
+            referer = referer,
+            hls = true
+        )
+    }
+
     private fun enqueue(
         url: String,
         suggestedName: String,
         mimeType: String?,
         userAgent: String?,
         cookie: String?,
-        referer: String?
+        referer: String?,
+        hls: Boolean = false
     ) {
         val item = DownloadItem(
             id = UUID.randomUUID().toString(),
@@ -280,7 +309,8 @@ class DownloadController private constructor(context: Context) {
             userAgent = userAgent,
             cookie = cookie,
             createdAt = System.currentTimeMillis(),
-            referer = referer
+            referer = referer,
+            hls = hls
         )
         items.add(0, item)
         persist()
@@ -500,6 +530,13 @@ class DownloadController private constructor(context: Context) {
             coroutineScope {
                 val sampler = launch { samplerLoop(session) }
                 try {
+                    if (item.hls) {
+                        // v1.3.2: a playlist URL is not a file — the
+                        // HTTP probe must never run on it. The HLS
+                        // path fetches the playlist itself and joins
+                        // its segments instead.
+                        completed = runHlsDownload(session)
+                    } else {
                     if (item.totalBytes < 0) probe(item)
                     when {
                         item.totalBytes == 0L -> {
@@ -520,6 +557,7 @@ class DownloadController private constructor(context: Context) {
                                 synchronized(item.ioLock) { item.chunks.all { it.complete } }
                         }
                         else -> completed = singleStream(session)
+                    }
                     }
                 } finally {
                     sampler.cancel()
@@ -938,6 +976,194 @@ class DownloadController private constructor(context: Context) {
         }
     }
 
+    /**
+     * GET an HLS item's playlist as text (capped, like the media
+     * sheet's own fetch) with the item's full header set, via
+     * [openForUrl]. The connection joins the session's live set, so
+     * a pause cuts a slow playlist read short like any other
+     * transfer read.
+     */
+    private fun fetchHlsPlaylistText(session: RunSession): String {
+        val item = session.item
+        val conn = openForUrl(item, item.url, null).first
+        session.connections += conn
+        try {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                throw IOException("Playlist answered HTTP $code")
+            }
+            return conn.inputStream.bufferedReader().use { reader ->
+                val sb = StringBuilder()
+                val buf = CharArray(8192)
+                var total = 0
+                while (total < MAX_PLAYLIST_CHARS) {
+                    val read = reader.read(buf)
+                    if (read < 0) break
+                    sb.append(buf, 0, read)
+                    total += read
+                }
+                sb.toString()
+            }
+        } finally {
+            session.connections -= conn
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * v1.3.2's HLS transfer: fetch the item's media playlist, then
+     * append its segments one by one into the .part file — the
+     * concatenation IS an MPEG-TS stream, so [finalizeDownload]
+     * renames the finished .part to the final (.ts) name as usual.
+     * Single-path on purpose (role null): segment order matters, so
+     * the parallel chunk engine cannot apply to a playlist.
+     *
+     * Refusals, all honest: a body that is not a playlist; a MASTER
+     * playlist (its variants are separate downloads — the sheet has
+     * the user pick one first); an encrypted stream (#EXT-X-KEY
+     * with a METHOD other than NONE — joining those bytes would
+     * produce an unplayable file); and a playlist with no segments.
+     *
+     * Resume rule: [DownloadItem.hlsSegmentsDone] counts the
+     * segments fully written, and an HLS item's .part length always
+     * equals [DownloadItem.downloadedBytes] — a segment interrupted
+     * mid-write is rolled back out (below) to keep that true. When
+     * the counter sits inside the freshly fetched playlist and the
+     * length still agrees, the run appends from that segment;
+     * anything else restarts the file from segment 0. The counter
+     * is persisted after every segment, so even an app restart
+     * resumes mid-playlist.
+     *
+     * Returns true when every segment is in; false when the run was
+     * stopped (pause — runEngine's finally settles PAUSED).
+     */
+    private suspend fun runHlsDownload(session: RunSession): Boolean {
+        val item = session.item
+        val playlist = fetchHlsPlaylistText(session)
+        if (!playlist.contains("#EXTM3U")) {
+            throw IOException("Not an HLS playlist")
+        }
+        if (playlist.contains("#EXT-X-STREAM-INF")) {
+            throw IOException("Pick a quality from the list first")
+        }
+        val keyLine = playlist.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("#EXT-X-KEY") }
+        if (keyLine != null) {
+            val method = Regex("""METHOD=([^,]+)""").find(keyLine)
+                ?.groupValues?.get(1)?.trim()
+            if (method != null && method != "NONE") {
+                throw IOException("Encrypted stream — cannot download")
+            }
+        }
+        val segments = playlist.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { segmentUri ->
+                try {
+                    URL(URL(item.url), segmentUri).toString()
+                } catch (e: Exception) {
+                    segmentUri
+                }
+            }
+        if (segments.isEmpty()) throw IOException("No segments in playlist")
+        synchronized(item.ioLock) { item.hlsSegmentCount = segments.size }
+
+        val part = partFile(item)
+        var startIndex = 0
+        synchronized(item.ioLock) {
+            val done = item.hlsSegmentsDone
+            if (done in 1 until segments.size && part.length() == item.downloadedBytes) {
+                startIndex = done
+            } else {
+                item.hlsSegmentsDone = 0
+                item.downloadedBytes = 0
+                item.wifiBytes = 0
+                item.cellBytes = 0
+            }
+        }
+
+        RandomAccessFile(part, "rw").use { raf ->
+            if (startIndex == 0) {
+                raf.setLength(0)
+            } else {
+                raf.seek(part.length())
+            }
+            for (index in startIndex until segments.size) {
+                if (session.stopped || !currentCoroutineContext().isActive) return false
+                val segmentStart = raf.filePointer
+                var segmentBytes = 0L
+                var countedCell = false
+                var conn: HttpURLConnection? = null
+                try {
+                    val opened = openForUrl(item, segments[index], null)
+                    conn = opened.first
+                    session.connections += conn
+                    val code = conn.responseCode
+                    if (code !in 200..299) {
+                        throw IOException("Segment answered HTTP $code")
+                    }
+                    countedCell = pool.kindOf(opened.second) == NetKind.CELL
+                    conn.inputStream.use { input ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            if (session.stopped) break
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            raf.write(buffer, 0, read)
+                            segmentBytes += read
+                            synchronized(item.ioLock) {
+                                item.downloadedBytes += read
+                                if (countedCell) {
+                                    item.cellBytes += read
+                                } else {
+                                    item.wifiBytes += read
+                                }
+                                session.lastProgressAtMs = System.currentTimeMillis()
+                            }
+                        }
+                    }
+                } catch (e: IOException) {
+                    // Roll the partial segment back out (see the
+                    // resume rule above), then let the failure stand.
+                    raf.setLength(segmentStart)
+                    synchronized(item.ioLock) {
+                        item.downloadedBytes -= segmentBytes
+                        if (countedCell) {
+                            item.cellBytes -= segmentBytes
+                        } else {
+                            item.wifiBytes -= segmentBytes
+                        }
+                    }
+                    throw e
+                } finally {
+                    conn?.let {
+                        session.connections -= it
+                        it.disconnect()
+                    }
+                }
+                if (session.stopped || !currentCoroutineContext().isActive) {
+                    // Stopped mid-segment: the partial bytes go back
+                    // out so the next run resumes at this segment.
+                    raf.setLength(segmentStart)
+                    synchronized(item.ioLock) {
+                        item.downloadedBytes -= segmentBytes
+                        if (countedCell) {
+                            item.cellBytes -= segmentBytes
+                        } else {
+                            item.wifiBytes -= segmentBytes
+                        }
+                    }
+                    return false
+                }
+                synchronized(item.ioLock) { item.hlsSegmentsDone = index + 1 }
+                persist()
+            }
+        }
+        synchronized(item.ioLock) { item.totalBytes = item.downloadedBytes }
+        return true
+    }
+
     /** Rename .part to the final name (collision-safe) and settle. */
     private fun finalizeDownload(item: DownloadItem) {
         val dir = downloadsDir()
@@ -1020,15 +1246,29 @@ class DownloadController private constructor(context: Context) {
         if (previous == 0L) instant else (instant * 6 + previous * 4) / 10
 
     /**
-     * Open a connection for [item]. With a [role], the connection is
-     * bound to that role's network handle when one is available (see
-     * [NetworkPool]); the returned network is the one actually used
-     * (null = the system default route), which is what bytes get
-     * counted under.
+     * Open a connection for [item]'s own URL. With a [role], the
+     * connection is bound to that role's network handle when one is
+     * available (see [NetworkPool]); the returned network is the one
+     * actually used (null = the system default route), which is what
+     * bytes get counted under.
      */
-    private fun openFor(item: DownloadItem, role: NetKind?): Pair<HttpURLConnection, Network?> {
+    private fun openFor(item: DownloadItem, role: NetKind?): Pair<HttpURLConnection, Network?> =
+        openForUrl(item, item.url, role)
+
+    /**
+     * [openFor] against an explicit URL: same timeouts, same
+     * redirects, same UA / cookie / referer headers — only the
+     * target differs. The HLS path (v1.3.2) uses it for the playlist
+     * and for each segment, so a segment request is header-identical
+     * to a request for the item's own URL.
+     */
+    private fun openForUrl(
+        item: DownloadItem,
+        urlString: String,
+        role: NetKind?
+    ): Pair<HttpURLConnection, Network?> {
         val network = role?.let { pool.networkFor(it) }
-        val url = URL(item.url)
+        val url = URL(urlString)
         val conn = (if (network != null) {
             network.openConnection(url)
         } else {
@@ -1089,6 +1329,7 @@ class DownloadController private constructor(context: Context) {
         private const val CLAIM_WAIT_MS = 1_000L
         private const val STALL_LIMIT_MS = 120_000L
         private const val SAMPLE_MS = 500L
+        private const val MAX_PLAYLIST_CHARS = 1_000_000
     }
 }
 

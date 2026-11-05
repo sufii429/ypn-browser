@@ -222,6 +222,13 @@ class BrowserController(context: Context, private val downloads: DownloadControl
      * ignored. First sight of a URL wins; the per-tab list is
      * capped at [MAX_MEDIA_PER_TAB]. Recording never touches the
      * response — the caller always returns null.
+     *
+     * The 480p lock (v1.3.2): a direct file whose URL itself writes
+     * a quality at 480p or below is not recorded at all — the user
+     * only wants links above 480p. A file with no quality token in
+     * its URL is still recorded (its quality is unknowable, not
+     * known-low), and playlists are exempt: their qualities live
+     * inside, and the media sheet hides the low ones there.
      */
     private fun recordMediaCandidate(tab: BrowserTab, url: String) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
@@ -231,6 +238,10 @@ class BrowserController(context: Context, private val downloads: DownloadControl
                 path.endsWith(".mkv") -> MediaKind.VIDEO_FILE
             path.endsWith(".m3u8") -> MediaKind.HLS
             else -> return
+        }
+        if (kind == MediaKind.VIDEO_FILE) {
+            val height = mediaUrlHeight(url)
+            if (height != null && height <= 480) return
         }
         synchronized(tab.mediaLock) {
             if (tab.media.any { it.url == url }) return
@@ -244,6 +255,24 @@ class BrowserController(context: Context, private val downloads: DownloadControl
                 )
             )
         }
+    }
+
+    /**
+     * The quality height a URL writes about itself, or null when it
+     * writes none: a "720p"-style token, or a separator-wrapped
+     * number ("_720_", "-720."). Mirrors the media sheet's label
+     * logic exactly, so what the 480p lock drops here is what the
+     * sheet would have labelled low there.
+     */
+    private fun mediaUrlHeight(url: String): Int? {
+        val text = url.lowercase()
+        for (q in MEDIA_QUALITY_TOKENS) {
+            if (text.contains("${q}p")) return q
+        }
+        for (q in MEDIA_QUALITY_TOKENS) {
+            if (Regex("""[_\-./]$q[_\-.]""").containsMatchIn(text)) return q
+        }
+        return null
     }
 
     /**
@@ -588,6 +617,9 @@ class BrowserController(context: Context, private val downloads: DownloadControl
 
         /** Fetcher cap: at most this many media candidates per page. */
         private const val MAX_MEDIA_PER_TAB = 30
+
+        /** Quality heights the fetcher recognises in a URL, best first. */
+        private val MEDIA_QUALITY_TOKENS = listOf(2160, 1440, 1080, 720, 480, 360, 240)
 
         private const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +

@@ -175,6 +175,21 @@ fun BrowserScreen(
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 mediaSheetOpen = false
+            },
+            onDownloadHls = { url, quality, referer ->
+                // v1.3.2: a picked HLS variant — the engine joins
+                // its segments into one MPEG-TS file, hence .ts.
+                downloads.enqueueHls(
+                    url = url,
+                    suggestedName = "video_" + (quality ?: "stream") + ".ts",
+                    referer = referer.ifBlank { null },
+                    userAgent = controller.lastUserAgent,
+                    cookie = runCatching {
+                        CookieManager.getInstance().getCookie(url)
+                    }.getOrNull()
+                )
+                Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                mediaSheetOpen = false
             }
         )
     }

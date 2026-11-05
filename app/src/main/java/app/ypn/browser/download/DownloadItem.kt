@@ -47,7 +47,14 @@ class DownloadItem(
      * context (the WebView download listener, pasted URLs) — those
      * send no Referer, exactly as before.
      */
-    val referer: String? = null
+    val referer: String? = null,
+    /**
+     * v1.3.2: true for an HLS variant download — [url] is a media
+     * playlist and the engine joins its segments into one MPEG-TS
+     * file instead of probing/transferring the URL as a plain file.
+     * See DownloadController.runHlsDownload.
+     */
+    val hls: Boolean = false
 ) {
     /** Final file name inside the downloads folder (collision-free). */
     var fileName by mutableStateOf(fileName)
@@ -74,6 +81,17 @@ class DownloadItem(
 
     /** True when the server accepted Range requests (chunked mode). */
     var ranged: Boolean = false
+
+    /**
+     * HLS bookkeeping (v1.3.2, [hls] downloads only): how many of the
+     * playlist's segments are fully written into the .part file, and
+     * how many the playlist holds in all. Together with
+     * [downloadedBytes] (which always equals the .part length for an
+     * HLS item) they make a resume continue at the next unwritten
+     * segment. Persisted by the store; mutated under [ioLock].
+     */
+    var hlsSegmentsDone: Int = 0
+    var hlsSegmentCount: Int = 0
 
     /** Chunk table for ranged downloads; guarded by [ioLock]. */
     val chunks = mutableListOf<ChunkProgress>()
