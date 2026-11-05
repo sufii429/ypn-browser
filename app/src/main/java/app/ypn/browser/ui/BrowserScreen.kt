@@ -265,8 +265,12 @@ fun BrowserToolbar(
     val palette = LocalYpnPalette.current
     val focusManager = LocalFocusManager.current
 
-    var editing by remember { mutableStateOf(false) }
-    var editText by remember { mutableStateOf("") }
+    // Keyed by tab (v1.3.4): the editing state belongs to the tab
+    // it was typed in. Unkeyed, a focused/half-typed address from
+    // one tab followed the user into a fresh blank tab, whose bar
+    // then showed the previous tab's address.
+    var editing by remember(tab?.id) { mutableStateOf(false) }
+    var editText by remember(tab?.id) { mutableStateOf("") }
     val currentUrl = tab?.currentUrl ?: ""
     val bookmarked = tab != null && controller.isBookmarked(currentUrl)
 

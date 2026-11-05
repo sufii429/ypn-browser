@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.3 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.4 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,9 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.4:** address-bar fix — the bar's editing state is now keyed
+by tab, so opening a fresh blank tab no longer shows the previous
+tab's address in the bar.
 **1.3.3:** the browser toolbar and its progress line move up beside
 the tab strip in the top bar — the 1.3.2 load test proved the strip
 safe there while the toolbar, still inside the browser screen, kept
