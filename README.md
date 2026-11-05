@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.1 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,9 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.1:** build fix — three `Modifier.padding(horizontal = …, top = …)`
+calls in MediaSheet.kt used an overload that does not exist; rewritten
+as `start/end/top`. No behaviour change from 1.3.0.
 **1.3.0:** tabs move to the top, and pages give up their videos.
 A scrolling strip of tab chips now tops the Home and Browser
 sections — tap to switch, ✕ to close, + for a new tab, ▦ for the

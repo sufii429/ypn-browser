@@ -120,7 +120,7 @@ fun LinkMenuSheet(
                 fontSize = 12.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 16.dp, top = 3.dp)
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 3.dp)
             )
             HorizontalDivider(
                 color = colors.outline,
@@ -262,7 +262,7 @@ fun MediaSheet(
                         "as more qualities load.",
                     color = palette.muted,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, top = 3.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 3.dp)
                 )
                 if (mediaItems.isEmpty()) {
                     Text(
@@ -303,7 +303,7 @@ fun MediaSheet(
                         "pause and resume included.",
                     color = palette.muted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, top = 10.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp)
                 )
             } else {
                 Row(
