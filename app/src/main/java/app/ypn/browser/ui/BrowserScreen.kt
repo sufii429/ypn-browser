@@ -89,46 +89,24 @@ import app.ypn.browser.vpn.VpnController
 @Composable
 fun BrowserScreen(
     controller: BrowserController,
-    onHome: () -> Unit,
-    vpn: VpnController,
-    onVpnSheetOpen: () -> Unit,
     downloads: DownloadController,
+    mediaSheetOpen: Boolean,
+    onMediaSheetOpenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
     val surfaceArgb = colors.surface.toArgb()
     val tab = controller.activeTab
     val context = LocalContext.current
-    var mediaSheetOpen by remember { mutableStateOf(false) }
 
-    Column(
+    // v1.3.3: this screen is the page area plus the sheets. The
+    // toolbar and its progress line moved up into the shell's
+    // topBar (see YpnApp), out of a loading page's reach.
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        BrowserToolbar(
-            controller = controller,
-            tab = tab,
-            onHome = onHome,
-            vpn = vpn,
-            onVpnSheetOpen = onVpnSheetOpen,
-            onMediaClick = { mediaSheetOpen = true }
-        )
-        if (tab != null && tab.isLoading) {
-            // Directly under the toolbar's address bar: a thin (3dp,
-            // v1.2) line filled with the tab's real load progress.
-            // isLoading is progress in 1..99, so the line hides itself
-            // the moment the page finishes.
-            LinearProgressIndicator(
-                progress = { tab.progress / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
-                color = colors.primary,
-                trackColor = LocalYpnPalette.current.surface2
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
             if (tab == null || tab.currentUrl.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -153,7 +131,6 @@ fun BrowserScreen(
                     InitialLoadOverlay(url = tab.currentUrl, progress = tab.progress)
                 }
             }
-        }
     }
 
     // v1.3 fetcher sheet: the streams the active tab's page pulled.
@@ -163,7 +140,7 @@ fun BrowserScreen(
         MediaSheet(
             tab = tab,
             userAgent = controller.lastUserAgent,
-            onDismissRequest = { mediaSheetOpen = false },
+            onDismissRequest = { onMediaSheetOpenChange(false) },
             onDownload = { item ->
                 downloads.enqueueMedia(
                     url = item.url,
@@ -174,7 +151,7 @@ fun BrowserScreen(
                     }.getOrNull()
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
-                mediaSheetOpen = false
+                onMediaSheetOpenChange(false)
             },
             onDownloadHls = { url, quality, referer ->
                 // v1.3.2: a picked HLS variant — the engine joins
@@ -189,7 +166,7 @@ fun BrowserScreen(
                     }.getOrNull()
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
-                mediaSheetOpen = false
+                onMediaSheetOpenChange(false)
             }
         )
     }
@@ -276,7 +253,7 @@ private fun InitialLoadOverlay(url: String, progress: Int) {
 }
 
 @Composable
-private fun BrowserToolbar(
+fun BrowserToolbar(
     controller: BrowserController,
     tab: BrowserTab?,
     onHome: () -> Unit,

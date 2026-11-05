@@ -34,6 +34,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -113,6 +114,11 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
     // root so the VPN chips on Home and in the browser toolbar open
     // the one shared sheet.
     var vpnSheetOpen by remember { mutableStateOf(false) }
+    // v1.3.3: the media sheet's open state lives here too — the
+    // toolbar button that opens it moved up into the topBar with
+    // the toolbar itself (see below), while the sheet stays hosted
+    // by BrowserScreen.
+    var mediaSheetOpen by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
     // Phase 4 pre-warm: build the first tab's WebView (and with it
@@ -164,10 +170,40 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
             // grid never carried it). Living here — outside the
             // section content — a loading page cannot cover it.
             if (selected == YpnSection.HOME && !showVpn) {
-                TabStrip(
-                    controller = controller,
-                    onTabsGrid = { selected = YpnSection.TABS }
-                )
+                Column {
+                    TabStrip(
+                        controller = controller,
+                        onTabsGrid = { selected = YpnSection.TABS }
+                    )
+                    // v1.3.3: the browser toolbar and its 3dp
+                    // progress line join the strip up here. The
+                    // user's load-test video proved the strip safe
+                    // in this slot while the toolbar, still inside
+                    // BrowserScreen, kept vanishing for the whole
+                    // first-load window — so the toolbar gets the
+                    // same out-of-the-page's-reach hosting.
+                    if (controller.browsing) {
+                        val topTab = controller.activeTab
+                        BrowserToolbar(
+                            controller = controller,
+                            tab = topTab,
+                            onHome = { controller.browsing = false },
+                            vpn = vpn,
+                            onVpnSheetOpen = { vpnSheetOpen = true },
+                            onMediaClick = { mediaSheetOpen = true }
+                        )
+                        if (topTab != null && topTab.isLoading) {
+                            LinearProgressIndicator(
+                                progress = { topTab.progress / 100f },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp),
+                                color = colors.primary,
+                                trackColor = LocalYpnPalette.current.surface2
+                            )
+                        }
+                    }
+                }
             }
         },
         bottomBar = {
@@ -233,10 +269,9 @@ fun YpnApp(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
                     } else if (controller.browsing) {
                         BrowserScreen(
                             controller = controller,
-                            onHome = { controller.browsing = false },
-                            vpn = vpn,
-                            onVpnSheetOpen = { vpnSheetOpen = true },
-                            downloads = downloads
+                            downloads = downloads,
+                            mediaSheetOpen = mediaSheetOpen,
+                            onMediaSheetOpenChange = { mediaSheetOpen = it }
                         )
                     } else {
                         HomeScreen(

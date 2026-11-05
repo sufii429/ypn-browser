@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.2 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.3 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,12 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.3:** the browser toolbar and its progress line move up beside
+the tab strip in the top bar — the 1.3.2 load test proved the strip
+safe there while the toolbar, still inside the browser screen, kept
+vanishing for the whole first-load window. BrowserScreen is now the
+page area plus the sheets; the media sheet's open state is the
+shell's.
 **1.3.2:** the tab strip moves into the Scaffold's top bar, where a
 loading page cannot cover it (its theme colour now runs behind the
 status bar too). The fetcher's size probes send the site's own
