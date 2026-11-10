@@ -88,7 +88,9 @@ fun VpnScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Free MS-SSTP servers · TCP 443",
+                    // v1.4 (redesign): plain words over protocol
+                    // jargon — what this screen does, in one line.
+                    text = "Free servers · tap a server to connect",
                     color = palette.muted,
                     fontSize = 11.sp
                 )

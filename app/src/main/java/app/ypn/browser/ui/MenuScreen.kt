@@ -52,6 +52,7 @@ import app.ypn.browser.download.DownloadController
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import app.ypn.browser.ui.theme.YpnThemeId
 import app.ypn.browser.ui.theme.ypnThemeAccent
+import app.ypn.browser.ui.theme.ypnThemeBackground
 
 private enum class MenuPage { ROOT, BOOKMARKS, HISTORY }
 
@@ -337,14 +338,14 @@ private fun GroupDivider() {
 }
 
 /**
- * The APPEARANCE group's theme picker, as drawn in the approved
- * v1.1 mockup (v1.1.1): a "Theme" row naming the current theme, and
- * beneath it one circular swatch per theme, filled with that theme's
- * accent colour (from the palette definitions, via [ypnThemeAccent]).
- * Since v1.2 the selected swatch wears the approved v1.2 mockup's
- * treatment — a thin outline, a white ring clear of the swatch, and
- * a white ✓ — because the old primary-coloured ring sat on the very
- * colour it was meant to stand out from and vanished.
+ * The APPEARANCE group's theme picker. Since v1.4 (redesign) it is
+ * the mockup's gallery: one card per theme, each previewing that
+ * theme in its own colours — a background swatch painted with
+ * [ypnThemeBackground] and the accent dot from [ypnThemeAccent] —
+ * with the theme's name under it, so the choice can be judged
+ * before it is tapped. The current theme's card wears the accent
+ * border and a "✓ Selected" line; the others say what a tap does.
+ * (Before v1.4 this was a row of plain accent-colour circles.)
  */
 @Composable
 private fun ThemeSwatchRow(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> Unit) {
@@ -353,74 +354,72 @@ private fun ThemeSwatchRow(themeId: YpnThemeId, onThemeChange: (YpnThemeId) -> U
     Column(
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "Theme",
-                color = colors.onSurface,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = themeId.label,
-                color = palette.muted,
-                fontSize = 12.sp
-            )
-        }
+        Text(
+            text = "Theme",
+            color = colors.onSurface,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold
+        )
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            YpnThemeId.entries.forEach { entry ->
-                val selected = entry == themeId
-                // Every swatch sits in the same 31dp slot so the row
-                // never shifts when the selection moves. Unselected:
-                // the plain 26dp circle, as before. Selected (v1.2):
-                // a slightly smaller circle wrapped in a thin
-                // outline and a 2dp white ring with a gap on each
-                // side, and a white ✓ in the middle — a different
-                // colour from the theme itself, visible on all four.
-                Box(
-                    modifier = Modifier.size(31.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .size(31.dp)
-                                .border(
-                                    1.dp,
-                                    colors.onSurface.copy(alpha = 0.45f),
-                                    CircleShape
-                                )
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .border(2.dp, Color.White, CircleShape)
-                        )
-                    }
-                    Box(
+        YpnThemeId.entries.chunked(2).forEachIndexed { rowIndex, rowEntries ->
+            if (rowIndex > 0) Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowEntries.forEach { entry ->
+                    val selected = entry == themeId
+                    Column(
                         modifier = Modifier
-                            .size(if (selected) 23.dp else 26.dp)
-                            .clip(CircleShape)
-                            .background(ypnThemeAccent(entry))
-                            .clickable { onThemeChange(entry) },
-                        contentAlignment = Alignment.Center
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(palette.surface2)
+                            .border(
+                                if (selected) 1.5.dp else 1.dp,
+                                if (selected) colors.primary else colors.outline,
+                                RoundedCornerShape(14.dp)
+                            )
+                            .clickable { onThemeChange(entry) }
+                            .padding(8.dp)
                     ) {
-                        if (selected) {
-                            Text(
-                                text = "✓",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(ypnThemeBackground(entry))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(end = 6.dp, bottom = 6.dp)
+                                    .size(13.dp)
+                                    .clip(CircleShape)
+                                    .background(ypnThemeAccent(entry))
                             )
                         }
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            text = entry.label,
+                            color = colors.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.SemiBold
+                            }
+                        )
+                        Text(
+                            text = if (selected) "✓ Selected" else "Tap to use",
+                            color = if (selected) colors.primary else palette.muted,
+                            fontSize = 10.sp
+                        )
                     }
+                }
+                if (rowEntries.size == 1) {
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
     }
 }
-
 /**
  * The theme picker — since Phase 4 this is its only home in the app
  * (the Menu). One row per theme, the current one checked.

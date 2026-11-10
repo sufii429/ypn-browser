@@ -168,6 +168,30 @@ fun HomeScreen(
             )
             VpnCard(vpn = vpn, onOpen = onVpnOpen, onConnectRequest = onVpnConnectRequest)
             DownloadCard(downloads = downloads, onOpenDownloads = onDownloadsOpen)
+            // v1.4 (redesign): the tiles get their name on screen —
+            // an unlabelled grid of letters is the one thing a
+            // first-time user cannot be expected to decode — plus
+            // the one gesture that is not visible anywhere (hold to
+            // edit) is written down next to it.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Speed Dial",
+                    color = colors.onBackground,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "Hold a tile to edit it",
+                    color = palette.muted,
+                    fontSize = 11.sp
+                )
+            }
             SpeedDial(onNavigate = onNavigate)
             Text(
                 text = "YPN · Your Personal Network — two networks, one fast download.",
@@ -323,7 +347,8 @@ private fun VpnCard(
     }
     // Phase 4 compact card: one slim server/status line under the
     // header row — the connected server when ON, the live status text
-    // while connecting or after a failure, nothing when OFF.
+    // while connecting or after a failure, and (since v1.4) a plain
+    // explanation of the card when OFF.
     val serverLine: String? = when (phase) {
         VpnPhase.ON -> server?.let { s ->
             buildString {
@@ -334,7 +359,10 @@ private fun VpnCard(
         }
         VpnPhase.CONNECTING -> vpn.statusText.ifBlank { "Connecting…" }
         VpnPhase.FAILED -> vpn.statusText.ifBlank { "Connection failed — tap Connect to retry" }
-        VpnPhase.OFF -> null
+        // v1.4 (redesign): a first-time user should not have to
+        // guess what this card is for — OFF now carries the same
+        // one-line explanation the other phases get.
+        VpnPhase.OFF -> "Free VPN Gate servers · tap Connect"
     }
 
     Card(

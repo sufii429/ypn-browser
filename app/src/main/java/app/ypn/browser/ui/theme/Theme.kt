@@ -59,6 +59,19 @@ fun ypnThemeAccent(themeId: YpnThemeId): Color = when (themeId) {
     YpnThemeId.DAYLIGHT -> DaylightPalette.wifi
 }
 
+/**
+ * The background colour of a theme, from the same scheme
+ * definitions — since v1.4 the Menu's theme gallery paints each
+ * theme card's preview swatch with it (accent dot via
+ * [ypnThemeAccent]), so a theme can be judged before it is tapped.
+ */
+fun ypnThemeBackground(themeId: YpnThemeId): Color = when (themeId) {
+    YpnThemeId.MIDNIGHT_CYAN -> MidnightCyanColors.background
+    YpnThemeId.EMBER -> EmberColors.background
+    YpnThemeId.ROYAL_PURPLE -> RoyalPurpleColors.background
+    YpnThemeId.DAYLIGHT -> DaylightColors.background
+}
+
 val LocalYpnPalette = staticCompositionLocalOf {
     YpnPalette(
         wifi = Color(0xFF22D3EE),

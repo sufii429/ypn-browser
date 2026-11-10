@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.6 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.4.0 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,23 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.4.0:** the redesign — the best of the two AI frontend
+concepts Mazeen shared, fitted to the app as it really is, under
+his brief "modern and easy to use, with YPN's existing features;
+no confusion even on first use". Home: the VPN card explains
+itself while OFF ("Free VPN Gate servers · tap Connect") and the
+Speed Dial gets its name on screen plus the invisible gesture
+written down ("Hold a tile to edit it"). VPN screen: the header
+subtitle is plain words now ("Free servers · tap a server to
+connect") instead of protocol jargon; the screen already had the
+mockup's status card, worked-first servers and ping/speed rows.
+Downloads: All / Active / Completed filter chips (the mockup's
+one new idea — presentation only) with matching empty-state
+lines. Menu: the theme picker is a gallery — one card per theme
+previewing its own background + accent, named, with "✓ Selected"
+/ "Tap to use" — replacing the plain swatch circles (new
+ypnThemeBackground helper in Theme.kt). No features added or
+removed; engine, VPN and chrome untouched.
 **1.3.6:** tail-splitting in the download engine (the idea from
 Mister Download Manager's segment planner). A worker that finds
 no unclaimed chunk no longer idles at the end of a download: when

@@ -2,6 +2,7 @@ package app.ypn.browser.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -48,6 +50,8 @@ import app.ypn.browser.ui.theme.LocalYpnPalette
  * Phase 3 Downloads screen: paste-a-URL box on top, then every
  * download (active first) with live progress, the measured Wi-Fi /
  * mobile-data split, and Pause / Resume / Cancel / Open / Delete.
+ * Since v1.4 (redesign) an All / Active / Completed chip row filters
+ * the list — presentation only; the store and engine are untouched.
  */
 @Composable
 fun DownloadsScreen(
@@ -60,6 +64,17 @@ fun DownloadsScreen(
     )
     // The one rename dialog, keyed by download id so only one shows.
     var renameItemId by remember { mutableStateOf<String?>(null) }
+    // v1.4: the chip filter. "Active" is everything not finished —
+    // downloading, waiting, paused and failed all still need the
+    // user or the network, which is what the word promises.
+    var filter by remember { mutableStateOf(DownloadFilter.ALL) }
+    val visible = sorted.filter { item ->
+        when (filter) {
+            DownloadFilter.ALL -> true
+            DownloadFilter.ACTIVE -> item.status != DownloadStatus.COMPLETED
+            DownloadFilter.COMPLETED -> item.status == DownloadStatus.COMPLETED
+        }
+    }
 
     Column(
         modifier = modifier
@@ -75,13 +90,32 @@ fun DownloadsScreen(
             modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 6.dp)
         )
         AddUrlRow(downloads = downloads)
+        Row(
+            modifier = Modifier.padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DownloadFilter.entries.forEach { entry ->
+                FilterChip(
+                    selected = filter == entry,
+                    onClick = { filter = entry },
+                    label = { Text(entry.label) }
+                )
+            }
+        }
         if (downloads.accelerationEnabled && downloads.hasActiveDownloads()) {
             PathStatusLine(downloads = downloads)
         }
-        if (sorted.isEmpty()) {
+        if (visible.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No downloads yet.\nFiles you download while browsing, and URLs you paste above, appear here.",
+                    text = when {
+                        sorted.isEmpty() ->
+                            "No downloads yet.\nFiles you download while browsing, and URLs you paste above, appear here."
+                        filter == DownloadFilter.ACTIVE ->
+                            "Nothing is downloading right now."
+                        else ->
+                            "No completed downloads yet."
+                    },
                     color = LocalYpnPalette.current.muted,
                     fontSize = 13.sp
                 )
@@ -92,7 +126,7 @@ fun DownloadsScreen(
                     .fillMaxSize()
                     .padding(top = 10.dp)
             ) {
-                items(sorted, key = { it.id }) { item ->
+                items(visible, key = { it.id }) { item ->
                     DownloadRow(
                         item = item,
                         downloads = downloads,
@@ -116,6 +150,13 @@ fun DownloadsScreen(
             onDismiss = { renameItemId = null }
         )
     }
+}
+
+/** v1.4: the Downloads screen's chip filter (see [DownloadsScreen]). */
+private enum class DownloadFilter(val label: String) {
+    ALL("All"),
+    ACTIVE("Active"),
+    COMPLETED("Completed")
 }
 
 private fun statusRank(status: DownloadStatus): Int = when (status) {
