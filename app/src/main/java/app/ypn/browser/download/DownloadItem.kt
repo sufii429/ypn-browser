@@ -16,8 +16,19 @@ enum class NetKind { WIFI, CELL }
  * resume continues at `start + downloaded` instead of starting over.
  * Mutated by engine workers and read by the store, always under the
  * owning item's [DownloadItem.ioLock].
+ *
+ * [endInclusive] is normally fixed, but a tail-split (v1.3.6, see
+ * DownloadController.trySplitChunk) can shrink it while the chunk is
+ * being streamed: the unwritten tail past the new end becomes a new
+ * chunk owned by another worker. The streaming loop clamps every
+ * write to the current end under ioLock, so the split can never make
+ * two workers write — or count — the same byte.
  */
-class ChunkProgress(val index: Int, val start: Long, val endInclusive: Long) {
+class ChunkProgress(
+    val index: Int,
+    val start: Long,
+    @Volatile var endInclusive: Long
+) {
     @Volatile
     var downloaded: Long = 0
 

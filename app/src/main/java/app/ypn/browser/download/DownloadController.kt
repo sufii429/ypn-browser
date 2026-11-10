@@ -59,6 +59,16 @@ import java.util.concurrent.ConcurrentHashMap
  * counted under the network that actually carried them. If only one
  * network exists, every worker ends up on it and the download simply
  * runs single-network.
+ *
+ * Tail-splitting (v1.3.6 — the idea Mazeen spotted in Mister
+ * Download Manager's segment planner): a worker that finds no
+ * unclaimed chunk left does not have to idle while a peer crawls.
+ * When a claimed chunk still has a large unwritten tail, the free
+ * worker splits that tail off and takes it ([trySplitChunk]). This
+ * kills the end-of-download crawl, where the last chunk sits on the
+ * slow path while the fast path has nothing left to do. A split is
+ * just a new chunk boundary, so it persists and resumes like any
+ * other.
  */
 class DownloadController private constructor(context: Context) {
 
@@ -704,7 +714,12 @@ class DownloadController private constructor(context: Context) {
         // writing a single byte on them. Any byte written resets it.
         var zeroByteFailures = 0
         while (!session.stopped) {
+            // v1.3.6: "no unclaimed chunk" no longer has to mean
+            // idling — if a claimed chunk still has a large
+            // unwritten tail, split it and take the tail instead
+            // (see trySplitChunk).
             val chunk = claimChunk(session, avoidIndex)
+                ?: trySplitChunk(session)
             if (chunk == null) {
                 // Nothing claimable: either every chunk is done (this
                 // worker leaves), or the unfinished ones are all
@@ -810,6 +825,60 @@ class DownloadController private constructor(context: Context) {
         }
     }
 
+    /**
+     * v1.3.6 tail-splitting: carve the unwritten tail off the
+     * claimed chunk with the most bytes still to go and claim the
+     * tail for the calling (otherwise idle) worker. Returns null
+     * when nothing is worth splitting — every claimed chunk is
+     * nearly done, or a split happened moments ago (splits are
+     * paced so a burst of workers freeing at once cannot shred one
+     * chunk into confetti).
+     *
+     * The split itself is only a boundary move under the usual
+     * locks (claimed, then ioLock — the same nesting claimChunk
+     * uses): the victim's [ChunkProgress.endInclusive] shrinks to
+     * the split point and a new chunk covering the old end is
+     * appended to the table. The victim's owner keeps streaming —
+     * its write loop clamps every write to the chunk's current end
+     * under ioLock, so it stops exactly at the new boundary and
+     * never writes or counts a byte that now belongs to the tail.
+     * The split point is chosen ahead of the victim's write cursor,
+     * so both halves stay non-empty and the chunk lengths still sum
+     * to the file size exactly. Because the store persists chunk
+     * boundaries, a download paused mid-split resumes with the
+     * split in place.
+     */
+    private fun trySplitChunk(session: RunSession): ChunkProgress? {
+        val item = session.item
+        val now = System.currentTimeMillis()
+        if (now - session.lastSplitAtMs < SPLIT_COOLDOWN_MS) return null
+        synchronized(session.claimed) {
+            synchronized(item.ioLock) {
+                val victim = item.chunks
+                    .filter { !it.complete && it.index in session.claimed }
+                    .maxByOrNull { it.length - it.downloaded }
+                    ?: return null
+                val remaining = victim.length - victim.downloaded
+                if (remaining < MIN_SPLIT_REMAINING_BYTES) return null
+                val oldEnd = victim.endInclusive
+                val splitStart = victim.start + victim.downloaded + remaining / 2
+                victim.endInclusive = splitStart - 1
+                // Chunks are only ever appended (prepareChunks
+                // builds them in order, splits append), so the
+                // table size is always the next free index.
+                val tail = ChunkProgress(
+                    index = item.chunks.size,
+                    start = splitStart,
+                    endInclusive = oldEnd
+                )
+                item.chunks += tail
+                session.claimed += tail.index
+                session.lastSplitAtMs = now
+                return tail
+            }
+        }
+    }
+
     /** Stream the still-missing tail of [chunk] into the .part file. */
     private fun streamChunkRange(
         session: RunSession,
@@ -856,19 +925,37 @@ class DownloadController private constructor(context: Context) {
                         ).toInt()
                         val read = input.read(buffer, 0, want)
                         if (read < 0) break
-                        raf.write(buffer, 0, read)
-                        pos += read
-                        synchronized(item.ioLock) {
-                            chunk.downloaded += read
-                            item.downloadedBytes += read
-                            session.lastProgressAtMs = System.currentTimeMillis()
-                            if (kind == NetKind.CELL) {
-                                item.cellBytes += read
-                            } else {
-                                item.wifiBytes += read
+                        // Write + count atomically under ioLock,
+                        // clamped to the chunk's CURRENT end. Since
+                        // v1.3.6 a free peer can split this chunk's
+                        // tail off while the request that produced
+                        // this buffer is still streaming; the bytes
+                        // past the new end now belong to the tail's
+                        // owner, and writing (or counting) them here
+                        // as well would double-count them. When the
+                        // clamp bites, this chunk is complete at its
+                        // new end and the loop is done.
+                        val written = synchronized(item.ioLock) {
+                            val allowed = chunk.endInclusive - pos + 1
+                            val n = minOf(read.toLong(), allowed)
+                                .toInt().coerceAtLeast(0)
+                            if (n > 0) {
+                                raf.write(buffer, 0, n)
+                                chunk.downloaded += n
+                                item.downloadedBytes += n
+                                session.lastProgressAtMs =
+                                    System.currentTimeMillis()
+                                if (kind == NetKind.CELL) {
+                                    item.cellBytes += n
+                                } else {
+                                    item.wifiBytes += n
+                                }
+                                clearPathError(kind)
                             }
-                            clearPathError(kind)
+                            n
                         }
+                        pos += written
+                        if (written < read) break
                     }
                 }
             }
@@ -1327,6 +1414,8 @@ class DownloadController private constructor(context: Context) {
         private const val MAX_PATH_ERROR_CHARS = 60
         private const val RETRY_DELAY_MS = 1_000L
         private const val CLAIM_WAIT_MS = 1_000L
+        private const val MIN_SPLIT_REMAINING_BYTES = 1L * 1024 * 1024
+        private const val SPLIT_COOLDOWN_MS = 1_000L
         private const val STALL_LIMIT_MS = 120_000L
         private const val SAMPLE_MS = 500L
         private const val MAX_PLAYLIST_CHARS = 1_000_000
@@ -1352,6 +1441,10 @@ private class RunSession(val item: DownloadItem) {
 
     var poolAcquired = false
     var job: Job? = null
+
+    /** Last tail-split time in this run; splits are paced per run. */
+    @Volatile
+    var lastSplitAtMs: Long = 0L
 
     /** Chunk indices handed out in this run; guarded by itself. */
     val claimed = mutableSetOf<Int>()

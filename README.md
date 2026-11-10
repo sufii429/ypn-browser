@@ -6,7 +6,7 @@ only** — distributed as an APK via GitHub releases (repo
 `sufii429/ypn-browser`), no Play Store, no backend, no accounts.
 
 **Package / applicationId:** `app.ypn.browser`
-**Version:** 1.3.5 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
+**Version:** 1.3.6 · minSdk 26 · targetSdk 35 · Kotlin 2.0.21 · Compose BOM 2024.12.01
 (Toolchain mirrors the Textoo Android app on purpose.)
 
 ## v1 — complete
@@ -156,6 +156,15 @@ translucent so the glow breathes through. The Menu's selected
 theme swatch now wears a contrasting white ring and check, visible
 on every theme.
 
+**1.3.6:** tail-splitting in the download engine (the idea from
+Mister Download Manager's segment planner). A worker that finds
+no unclaimed chunk no longer idles at the end of a download: when
+a claimed chunk still has ≥ 1 MB unwritten, it splits that tail
+off and takes it, so the last chunk can't crawl on the slow path
+while the fast path sits idle. Writes clamp to the chunk's
+current end under the write lock, so a split mid-stream can
+never double-write or double-count a byte; splits persist as
+ordinary chunk boundaries and survive pause/resume.
 **1.3.5:** Disconnect is final. Android restarts the sticky VPN
 service on its own after the app closes, and the restarted service
 redialed the stored profile — a pressed Disconnect quietly undid
