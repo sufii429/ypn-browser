@@ -96,5 +96,5 @@ to your device.
 
 ## About the developer
 
-Designed and built by **Mazeen** ([@sufii429](https://github.com/sufii429)) —
+Designed and built by **Sufyan Aura** ([@sufii429](https://github.com/sufii429)) —
 portfolio: [sufyanaura.netlify.app](https://sufyanaura.netlify.app)
