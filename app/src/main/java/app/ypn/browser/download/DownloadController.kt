@@ -48,9 +48,21 @@ import java.util.concurrent.ConcurrentHashMap
  *     preallocated .part file (each worker seeks to its chunk's
  *     offset). Per-chunk byte counters make pause/resume exact, even
  *     across an app restart.
- *  2. Otherwise a single plain stream. Honest limit: pause keeps the
- *     partial bytes, but resume restarts that stream from byte 0 —
- *     without Range support there is no way to continue mid-file.
+ *  2. Otherwise a single plain stream. Since v1.5 a resume first
+ *     tries to continue that stream with a Range request from the
+ *     byte the .part file already holds (some servers refuse ranges
+ *     to the probe yet honour them on a plain GET); only a server
+ *     that answers the continuation with a full 200 restarts the
+ *     stream from byte 0.
+ *
+ * Link refresh (v1.5 — the Vega downloader's central trick, adapted
+ * to a WebView browser): signed media links die — a CDN answers 403
+ * once the signature expires or the request arrives from a new IP.
+ * When a transfer dies that way, the engine re-fetches the linking
+ * page, pulls a fresh media URL out of it and resumes from the
+ * exact checkpoint (chunk table / segment counter / .part length)
+ * instead of failing the download. One refresh per run; a download
+ * whose page yields no fresh link fails honestly, as before.
  *
  * Accelerator: with the setting on, chunk workers come in Wi-Fi and
  * cellular roles (2 + 2). A role opens its connections through the
@@ -164,19 +176,48 @@ class DownloadController private constructor(context: Context) {
                         item.error = "The downloaded file was deleted outside YPN."
                     }
                 DownloadStatus.PAUSED -> {
-                    // Verify the .part file still matches the saved
-                    // progress; if it vanished or shrank, the saved
-                    // counters would describe bytes that aren't there.
+                    // Reconcile the saved state against the file on
+                    // disk (v1.5): if the .part vanished or shrank,
+                    // the saved counters would describe bytes that
+                    // aren't there.
                     val part = File(dir, item.partFileName)
-                    val intact = part.exists() &&
-                        (!item.ranged || part.length() == item.totalBytes)
-                    if (!intact) {
-                        synchronized(item.ioLock) {
-                            item.chunks.forEach { it.downloaded = 0 }
+                    if (item.hls) {
+                        // An HLS item's .part length always equals
+                        // its downloadedBytes (the engine rolls a
+                        // half-written segment back out). A longer
+                        // file means the process died mid-segment,
+                        // before the rollback: the counters are the
+                        // truth, so trim the file back to them. A
+                        // shorter (or missing) file means the
+                        // counters describe bytes that aren't there:
+                        // start the playlist over.
+                        when {
+                            !part.exists() || part.length() < item.downloadedBytes -> {
+                                resetCounters(item)
+                                item.hlsSegmentsDone = 0
+                            }
+                            part.length() > item.downloadedBytes -> {
+                                try {
+                                    RandomAccessFile(part, "rw").use {
+                                        it.setLength(item.downloadedBytes)
+                                    }
+                                } catch (e: Exception) {
+                                    resetCounters(item)
+                                    item.hlsSegmentsDone = 0
+                                }
+                            }
                         }
-                        item.downloadedBytes = 0
-                        item.wifiBytes = 0
-                        item.cellBytes = 0
+                    } else {
+                        val intact = part.exists() &&
+                            (!item.ranged || part.length() == item.totalBytes)
+                        if (!intact) {
+                            synchronized(item.ioLock) {
+                                item.chunks.forEach { it.downloaded = 0 }
+                            }
+                            item.downloadedBytes = 0
+                            item.wifiBytes = 0
+                            item.cellBytes = 0
+                        }
                     }
                 }
                 else -> Unit
@@ -205,6 +246,15 @@ class DownloadController private constructor(context: Context) {
     }
 
     private fun partFile(item: DownloadItem): File = File(downloadsDir(), item.partFileName)
+
+    /** Zero an item's byte counters under its lock (reconciliation). */
+    private fun resetCounters(item: DownloadItem) {
+        synchronized(item.ioLock) {
+            item.downloadedBytes = 0
+            item.wifiBytes = 0
+            item.cellBytes = 0
+        }
+    }
 
     // ---- Settings --------------------------------------------------------
 
@@ -264,7 +314,8 @@ class DownloadController private constructor(context: Context) {
         url: String,
         referer: String?,
         userAgent: String?,
-        cookie: String? = null
+        cookie: String? = null,
+        quality: String? = null
     ) {
         enqueue(
             url = url,
@@ -272,7 +323,8 @@ class DownloadController private constructor(context: Context) {
             mimeType = null,
             userAgent = userAgent,
             cookie = cookie,
-            referer = referer
+            referer = referer,
+            quality = quality
         )
     }
 
@@ -289,7 +341,8 @@ class DownloadController private constructor(context: Context) {
         suggestedName: String,
         referer: String?,
         userAgent: String?,
-        cookie: String? = null
+        cookie: String? = null,
+        quality: String? = null
     ) {
         enqueue(
             url = url,
@@ -298,7 +351,8 @@ class DownloadController private constructor(context: Context) {
             userAgent = userAgent,
             cookie = cookie,
             referer = referer,
-            hls = true
+            hls = true,
+            quality = quality
         )
     }
 
@@ -309,7 +363,8 @@ class DownloadController private constructor(context: Context) {
         userAgent: String?,
         cookie: String?,
         referer: String?,
-        hls: Boolean = false
+        hls: Boolean = false,
+        quality: String? = null
     ) {
         val item = DownloadItem(
             id = UUID.randomUUID().toString(),
@@ -320,7 +375,8 @@ class DownloadController private constructor(context: Context) {
             cookie = cookie,
             createdAt = System.currentTimeMillis(),
             referer = referer,
-            hls = hls
+            hls = hls,
+            quality = quality
         )
         items.add(0, item)
         persist()
@@ -540,35 +596,7 @@ class DownloadController private constructor(context: Context) {
             coroutineScope {
                 val sampler = launch { samplerLoop(session) }
                 try {
-                    if (item.hls) {
-                        // v1.3.2: a playlist URL is not a file — the
-                        // HTTP probe must never run on it. The HLS
-                        // path fetches the playlist itself and joins
-                        // its segments instead.
-                        completed = runHlsDownload(session)
-                    } else {
-                    if (item.totalBytes < 0) probe(item)
-                    when {
-                        item.totalBytes == 0L -> {
-                            // An empty file has nothing to transfer.
-                            partFile(item).outputStream().use { }
-                            completed = true
-                        }
-                        item.ranged && item.totalBytes > 0 -> {
-                            prepareChunks(item)
-                            // The stall window measures chunk transfer
-                            // only — probe/setup time never counts.
-                            session.lastProgressAtMs = System.currentTimeMillis()
-                            val workers = workerRoles().map { role ->
-                                launch { chunkWorker(session, role) }
-                            }
-                            workers.forEach { it.join() }
-                            completed = !session.stopped && session.failReason == null &&
-                                synchronized(item.ioLock) { item.chunks.all { it.complete } }
-                        }
-                        else -> completed = singleStream(session)
-                    }
-                    }
+                    completed = transferWithRefresh(session)
                 } finally {
                     sampler.cancel()
                 }
@@ -603,6 +631,154 @@ class DownloadController private constructor(context: Context) {
             }
             persist()
         }
+    }
+
+    /**
+     * v1.5: one transfer attempt, plus — when it dies the link-death
+     * way (HTTP 403/410) and the download came from a page — ONE
+     * fresh-link refresh and a second attempt from the checkpoint.
+     * Chunked (ranged) transfers report link death through the
+     * session instead (their workers swallow HTTP errors by design);
+     * the sampler performs the same refresh for them — see
+     * [samplerLoop].
+     */
+    private suspend fun transferWithRefresh(session: RunSession): Boolean {
+        val item = session.item
+        var refreshed = false
+        while (true) {
+            try {
+                return attemptTransfer(session)
+            } catch (e: IOException) {
+                if (refreshed || session.stopped || !isLinkDead(e) ||
+                    item.referer.isNullOrBlank()
+                ) {
+                    throw e
+                }
+                refreshed = true
+                item.linkRefreshing = true
+                val ok = try {
+                    refreshMediaLink(item)
+                } catch (x: Exception) {
+                    false
+                } finally {
+                    item.linkRefreshing = false
+                }
+                if (!ok) throw e
+                // The fresh link gets measured on its own: forget
+                // the dead link's probe and chunk table. (An HLS
+                // item keeps its segment checkpoint — the fresh
+                // playlist is re-read and re-validated by
+                // runHlsDownload itself.)
+                synchronized(item.ioLock) { item.chunks.clear() }
+                item.ranged = false
+                item.totalBytes = -1
+                persist()
+            }
+        }
+    }
+
+    /** One raw transfer attempt: HLS join, chunked ranges, or one stream. */
+    private suspend fun attemptTransfer(session: RunSession): Boolean {
+        val item = session.item
+        if (item.hls) {
+            // v1.3.2: a playlist URL is not a file — the HTTP probe
+            // must never run on it. The HLS path fetches the playlist
+            // itself and joins its segments instead.
+            return runHlsDownload(session)
+        }
+        if (item.totalBytes < 0) probe(item)
+        return when {
+            item.totalBytes == 0L -> {
+                // An empty file has nothing to transfer.
+                partFile(item).outputStream().use { }
+                true
+            }
+            item.ranged && item.totalBytes > 0 -> {
+                prepareChunks(item)
+                // The stall window measures chunk transfer only —
+                // probe/setup time never counts.
+                session.lastProgressAtMs = System.currentTimeMillis()
+                coroutineScope {
+                    val workers = workerRoles().map { role ->
+                        launch { chunkWorker(session, role) }
+                    }
+                    workers.forEach { it.join() }
+                }
+                !session.stopped && session.failReason == null &&
+                    synchronized(item.ioLock) { item.chunks.all { it.complete } }
+            }
+            else -> singleStream(session)
+        }
+    }
+
+    /** Link death, as every transfer path reports it: HTTP 403 or 410. */
+    private fun isLinkDead(e: Exception): Boolean {
+        val message = e.message ?: return false
+        return message.contains("HTTP 403") || message.contains("HTTP 410")
+    }
+
+    /**
+     * v1.5: re-resolve a fresh media URL from the page that linked
+     * this download (Vega's "start with a fresh link", WebView
+     * edition). The page is re-fetched with the item's own UA and
+     * cookie, its HTML is scanned for direct media URLs, and the
+     * best match — same file name first, then same quality token
+     * (or any .m3u8 for an HLS item) — replaces [DownloadItem.url].
+     * True only when a DIFFERENT URL was found and swapped in.
+     */
+    private fun refreshMediaLink(item: DownloadItem): Boolean {
+        val pageUrl = item.referer?.takeIf { it.isNotBlank() } ?: return false
+        val html = try {
+            val conn = openForUrl(item, pageUrl, null).first
+            try {
+                if (conn.responseCode !in 200..299) return false
+                conn.inputStream.bufferedReader().use { reader ->
+                    val sb = StringBuilder()
+                    val buf = CharArray(8192)
+                    var total = 0
+                    while (total < MAX_PAGE_CHARS) {
+                        val read = reader.read(buf)
+                        if (read < 0) break
+                        sb.append(buf, 0, read)
+                        total += read
+                    }
+                    sb.toString()
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            return false
+        }
+        val cleaned = html.replace("\\/", "/").replace("&amp;", "&")
+        val candidates = MEDIA_URL_REGEX.findAll(cleaned)
+            .map { it.value.trimEnd('"', '\'', '<', '>', ')', ']', ',') }
+            .filter { it != item.url }
+            .distinct()
+            .toList()
+        if (candidates.isEmpty()) return false
+        val currentName = item.url.substringBefore('?').substringAfterLast('/')
+        val currentQuality = qualityTokenOf(item.url)
+        val fresh = candidates.firstOrNull { candidate ->
+            candidate.substringBefore('?').substringAfterLast('/') == currentName
+        } ?: candidates.firstOrNull { candidate ->
+            if (item.hls) {
+                candidate.substringBefore('?').contains(".m3u8")
+            } else {
+                currentQuality != null && qualityTokenOf(candidate) == currentQuality
+            }
+        } ?: return false
+        item.url = fresh
+        return true
+    }
+
+    /** A "720p"-style token written in a URL, or null — refresh matching only. */
+    private fun qualityTokenOf(url: String): String? {
+        val text = url.lowercase()
+        for (q in listOf(2160, 1440, 1080, 720, 480, 360, 240)) {
+            if (text.contains("${q}p")) return "${q}p"
+        }
+        return null
     }
 
     /** HEAD, then a one-byte Range GET, to learn size + range support. */
@@ -908,6 +1084,10 @@ class DownloadController private constructor(context: Context) {
                 // IP refusing the second network) instead of nothing.
                 recordPathError(role ?: pool.kindOf(network), "HTTP $code")
                 failureRecorded = true
+                // v1.5: a 403/410 here usually means the signed link
+                // itself died (not just this path) — flag it for the
+                // sampler's link refresh.
+                if (code == 403 || code == 410) session.linkDeadCode = code
                 throw IOException("HTTP $code on a range request")
             }
             val kind = pool.kindOf(network)
@@ -981,17 +1161,23 @@ class DownloadController private constructor(context: Context) {
 
     /**
      * Fallback for servers without usable ranges: one plain stream.
-     * Pause keeps the partial file, but resume restarts this stream
-     * from byte 0 (there is no mid-file continuation without ranges),
-     * and the byte counters restart with it so the split stays true.
+     * Since v1.5 a resume first asks the server to continue the
+     * stream from the byte the .part file already holds — some
+     * servers refuse ranges to the probe yet honour them here. A
+     * 206 means the saved bytes stay and the counters resume with
+     * them (the earlier bytes are credited to this connection's
+     * network — an approximation, since the path that carried them
+     * is no longer knowable); a 200 means the server insists on the
+     * whole file, so the stream and its counters restart from byte
+     * 0, as before.
      */
     private fun singleStream(session: RunSession): Boolean {
         val item = session.item
         val part = partFile(item)
-        synchronized(item.ioLock) {
-            item.downloadedBytes = 0
-            item.wifiBytes = 0
-            item.cellBytes = 0
+        val resumeFrom = if (item.totalBytes > 0 && part.exists()) {
+            part.length().takeIf { it in 1 until item.totalBytes } ?: 0L
+        } else {
+            0L
         }
         val role = if (accelerationEnabled) NetKind.WIFI else null
         var conn: HttpURLConnection? = null
@@ -1004,20 +1190,40 @@ class DownloadController private constructor(context: Context) {
             val connection = opened.first
             network = opened.second
             session.connections += connection
+            if (resumeFrom > 0) {
+                connection.setRequestProperty("Range", "bytes=$resumeFrom-")
+            }
             val code = connection.responseCode
-            if (code != HttpURLConnection.HTTP_OK) {
+            val append = resumeFrom > 0 && code == HttpURLConnection.HTTP_PARTIAL
+            if (code != HttpURLConnection.HTTP_OK && !append) {
                 // Record before the throw, as in streamChunkRange.
                 recordPathError(role ?: pool.kindOf(network), "HTTP $code")
                 failureRecorded = true
                 throw IOException("HTTP $code")
             }
-            val length = connection.contentLengthLong
-            if (length > 0) item.totalBytes = length
             val kind = pool.kindOf(network)
             countedKind = kind
-            var written = 0L
+            if (append) {
+                parseContentRangeTotal(connection.getHeaderField("Content-Range"))
+                    ?.takeIf { it > 0 }?.let { item.totalBytes = it }
+            } else {
+                val length = connection.contentLengthLong
+                if (length > 0) item.totalBytes = length
+            }
+            synchronized(item.ioLock) {
+                if (append) {
+                    item.downloadedBytes = resumeFrom
+                    item.wifiBytes = if (kind == NetKind.CELL) 0L else resumeFrom
+                    item.cellBytes = if (kind == NetKind.CELL) resumeFrom else 0L
+                } else {
+                    item.downloadedBytes = 0
+                    item.wifiBytes = 0
+                    item.cellBytes = 0
+                }
+            }
+            var written = if (append) resumeFrom else 0L
             RandomAccessFile(part, "rw").use { raf ->
-                raf.setLength(0)
+                if (append) raf.seek(resumeFrom) else raf.setLength(0)
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     while (true) {
@@ -1098,6 +1304,24 @@ class DownloadController private constructor(context: Context) {
     }
 
     /**
+     * A media playlist's segment URLs, in order, resolved against
+     * the playlist's own URL. Shared by [runHlsDownload]'s first
+     * parse and its v1.5 fresh-playlist swap, so both read a
+     * playlist exactly the same way.
+     */
+    private fun parseHlsSegmentUrls(playlist: String, baseUrl: String): List<String> =
+        playlist.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { segmentUri ->
+                try {
+                    URL(URL(baseUrl), segmentUri).toString()
+                } catch (e: Exception) {
+                    segmentUri
+                }
+            }
+
+    /**
      * v1.3.2's HLS transfer: fetch the item's media playlist, then
      * append its segments one by one into the .part file — the
      * concatenation IS an MPEG-TS stream, so [finalizeDownload]
@@ -1143,16 +1367,7 @@ class DownloadController private constructor(context: Context) {
                 throw IOException("Encrypted stream — cannot download")
             }
         }
-        val segments = playlist.lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .map { segmentUri ->
-                try {
-                    URL(URL(item.url), segmentUri).toString()
-                } catch (e: Exception) {
-                    segmentUri
-                }
-            }
+        var segments = parseHlsSegmentUrls(playlist, item.url)
         if (segments.isEmpty()) throw IOException("No segments in playlist")
         synchronized(item.ioLock) { item.hlsSegmentCount = segments.size }
 
@@ -1170,6 +1385,7 @@ class DownloadController private constructor(context: Context) {
             }
         }
 
+        var playlistRefreshed = false
         RandomAccessFile(part, "rw").use { raf ->
             if (startIndex == 0) {
                 raf.setLength(0)
@@ -1179,69 +1395,104 @@ class DownloadController private constructor(context: Context) {
             for (index in startIndex until segments.size) {
                 if (session.stopped || !currentCoroutineContext().isActive) return false
                 val segmentStart = raf.filePointer
-                var segmentBytes = 0L
-                var countedCell = false
-                var conn: HttpURLConnection? = null
-                try {
-                    val opened = openForUrl(item, segments[index], null)
-                    conn = opened.first
-                    session.connections += conn
-                    val code = conn.responseCode
-                    if (code !in 200..299) {
-                        throw IOException("Segment answered HTTP $code")
-                    }
-                    countedCell = pool.kindOf(opened.second) == NetKind.CELL
-                    conn.inputStream.use { input ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            if (session.stopped) break
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            raf.write(buffer, 0, read)
-                            segmentBytes += read
-                            synchronized(item.ioLock) {
-                                item.downloadedBytes += read
-                                if (countedCell) {
-                                    item.cellBytes += read
-                                } else {
-                                    item.wifiBytes += read
+                // v1.5 (Vega's per-segment discipline): a segment is
+                // retried up to HLS_SEGMENT_ATTEMPTS times with a
+                // growing backoff before its failure may fail the
+                // download, and a link-dead segment (403/410) first
+                // earns the run's one fresh playlist — same segment
+                // count means the same film carrying fresh signed
+                // segment URLs.
+                var attempt = 0
+                var segmentDone = false
+                while (!segmentDone) {
+                    var segmentBytes = 0L
+                    var countedCell = false
+                    var conn: HttpURLConnection? = null
+                    try {
+                        val opened = openForUrl(item, segments[index], null)
+                        conn = opened.first
+                        session.connections += conn
+                        val code = conn.responseCode
+                        if (code !in 200..299) {
+                            throw IOException("Segment answered HTTP $code")
+                        }
+                        countedCell = pool.kindOf(opened.second) == NetKind.CELL
+                        conn.inputStream.use { input ->
+                            val buffer = ByteArray(BUFFER_SIZE)
+                            while (true) {
+                                if (session.stopped) break
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                raf.write(buffer, 0, read)
+                                segmentBytes += read
+                                synchronized(item.ioLock) {
+                                    item.downloadedBytes += read
+                                    if (countedCell) {
+                                        item.cellBytes += read
+                                    } else {
+                                        item.wifiBytes += read
+                                    }
+                                    session.lastProgressAtMs = System.currentTimeMillis()
                                 }
-                                session.lastProgressAtMs = System.currentTimeMillis()
                             }
                         }
-                    }
-                } catch (e: IOException) {
-                    // Roll the partial segment back out (see the
-                    // resume rule above), then let the failure stand.
-                    raf.setLength(segmentStart)
-                    synchronized(item.ioLock) {
-                        item.downloadedBytes -= segmentBytes
-                        if (countedCell) {
-                            item.cellBytes -= segmentBytes
-                        } else {
-                            item.wifiBytes -= segmentBytes
+                    } catch (e: IOException) {
+                        // Roll the partial segment back out (see
+                        // the resume rule above) before anything
+                        // else touches the file or the counters.
+                        raf.setLength(segmentStart)
+                        synchronized(item.ioLock) {
+                            item.downloadedBytes -= segmentBytes
+                            if (countedCell) {
+                                item.cellBytes -= segmentBytes
+                            } else {
+                                item.wifiBytes -= segmentBytes
+                            }
+                        }
+                        if (session.stopped) return false
+                        attempt++
+                        if (isLinkDead(e) && !playlistRefreshed) {
+                            playlistRefreshed = true
+                            item.linkRefreshing = true
+                            val freshText = try {
+                                fetchHlsPlaylistText(session)
+                            } catch (x: Exception) {
+                                null
+                            } finally {
+                                item.linkRefreshing = false
+                            }
+                            if (freshText != null) {
+                                val freshSegments =
+                                    parseHlsSegmentUrls(freshText, item.url)
+                                if (freshSegments.size == segments.size) {
+                                    segments = freshSegments
+                                }
+                            }
+                        }
+                        if (attempt >= HLS_SEGMENT_ATTEMPTS) throw e
+                        delay(minOf(1000L * (1 shl (attempt - 1)), 16_000L))
+                        continue
+                    } finally {
+                        conn?.let {
+                            session.connections -= it
+                            it.disconnect()
                         }
                     }
-                    throw e
-                } finally {
-                    conn?.let {
-                        session.connections -= it
-                        it.disconnect()
-                    }
-                }
-                if (session.stopped || !currentCoroutineContext().isActive) {
-                    // Stopped mid-segment: the partial bytes go back
-                    // out so the next run resumes at this segment.
-                    raf.setLength(segmentStart)
-                    synchronized(item.ioLock) {
-                        item.downloadedBytes -= segmentBytes
-                        if (countedCell) {
-                            item.cellBytes -= segmentBytes
-                        } else {
-                            item.wifiBytes -= segmentBytes
+                    if (session.stopped || !currentCoroutineContext().isActive) {
+                        // Stopped mid-segment: the partial bytes go
+                        // back out so the next run resumes here.
+                        raf.setLength(segmentStart)
+                        synchronized(item.ioLock) {
+                            item.downloadedBytes -= segmentBytes
+                            if (countedCell) {
+                                item.cellBytes -= segmentBytes
+                            } else {
+                                item.wifiBytes -= segmentBytes
+                            }
                         }
+                        return false
                     }
-                    return false
+                    segmentDone = true
                 }
                 synchronized(item.ioLock) { item.hlsSegmentsDone = index + 1 }
                 persist()
@@ -1310,6 +1561,38 @@ class DownloadController private constructor(context: Context) {
                     "No network path is making progress — download stalled. " +
                         "Resume to try again."
                 )
+            }
+            // v1.5: a chunked transfer whose link died (403/410 on
+            // its range requests) gets the same one fresh-link
+            // refresh as the other paths — performed here, on the
+            // sampler, because the workers themselves just hand
+            // chunks back. A swapped URL is picked up by every
+            // worker's next connection automatically, and the chunk
+            // table carries the resume. A failed refresh fails the
+            // run at once with the honest reason, instead of
+            // stalling out over two minutes.
+            if (session.linkDeadCode != null && !session.linkRefreshTried &&
+                !item.referer.isNullOrBlank() && !session.stopped
+            ) {
+                session.linkRefreshTried = true
+                item.linkRefreshing = true
+                val ok = try {
+                    refreshMediaLink(item)
+                } catch (e: Exception) {
+                    false
+                } finally {
+                    item.linkRefreshing = false
+                }
+                session.linkDeadCode = null
+                if (ok) {
+                    session.lastProgressAtMs = System.currentTimeMillis()
+                    persist()
+                } else {
+                    session.fail(
+                        "The download link expired and a fresh one could " +
+                            "not be fetched. Resume to try again."
+                    )
+                }
             }
             val now = System.nanoTime()
             val dtSec = (now - lastTime) / 1_000_000_000.0
@@ -1419,6 +1702,14 @@ class DownloadController private constructor(context: Context) {
         private const val STALL_LIMIT_MS = 120_000L
         private const val SAMPLE_MS = 500L
         private const val MAX_PLAYLIST_CHARS = 1_000_000
+        private const val MAX_PAGE_CHARS = 2_000_000
+        private const val HLS_SEGMENT_ATTEMPTS = 5
+
+        /** Direct media URLs inside a page's HTML (the link refresh's net). */
+        private val MEDIA_URL_REGEX = Regex(
+            """https?://[^\s"'<>]+?\.(?:mp4|webm|mkv|m3u8)(?:\?[^\s"'<>]*)?""",
+            RegexOption.IGNORE_CASE
+        )
     }
 }
 
@@ -1445,6 +1736,18 @@ private class RunSession(val item: DownloadItem) {
     /** Last tail-split time in this run; splits are paced per run. */
     @Volatile
     var lastSplitAtMs: Long = 0L
+
+    /**
+     * v1.5: set by a chunk worker when the server answers a range
+     * request with 403/410 — the link died mid-download. The sampler
+     * watches this and performs the run's one link refresh.
+     */
+    @Volatile
+    var linkDeadCode: Int? = null
+
+    /** v1.5: this run's one link refresh has been spent. */
+    @Volatile
+    var linkRefreshTried: Boolean = false
 
     /** Chunk indices handed out in this run; guarded by itself. */
     val claimed = mutableSetOf<Int>()

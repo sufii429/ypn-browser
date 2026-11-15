@@ -148,7 +148,8 @@ fun BrowserScreen(
                     userAgent = controller.lastUserAgent,
                     cookie = runCatching {
                         CookieManager.getInstance().getCookie(item.url)
-                    }.getOrNull()
+                    }.getOrNull(),
+                    quality = mediaQualityLabel(item.url)
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 onMediaSheetOpenChange(false)
@@ -163,7 +164,8 @@ fun BrowserScreen(
                     userAgent = controller.lastUserAgent,
                     cookie = runCatching {
                         CookieManager.getInstance().getCookie(url)
-                    }.getOrNull()
+                    }.getOrNull(),
+                    quality = quality
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 onMediaSheetOpenChange(false)

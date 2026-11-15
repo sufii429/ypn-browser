@@ -77,16 +77,20 @@ class SpeedDialStore(context: Context) {
         private const val KEY_TILES = "speed_dial_tiles"
 
         /**
-         * The original Phase 1 quick tiles, kept as the first-run
-         * seed so v1.2 opens with exactly the Home screen v1.1.2
-         * had: same glyphs (▶ for YouTube, first letters for the
-         * rest) and the theme accent as their glyph colour.
+         * First-run seed (v1.5): three clean, openly-licensed sites
+         * whose files download directly, pinned so a brand-new user
+         * can test the download engine the moment the app opens —
+         * Internet Archive (public-domain library), Blender's open
+         * movies (a plain directory of downloadable film files) and
+         * Wikimedia Commons. First letters as glyphs, theme accent
+         * as their colour, like the original seed. The seed applies
+         * only while no list was ever saved: an existing install
+         * keeps its own tiles untouched.
          */
         val SEED_TILES: List<SpeedDialTile> = listOf(
-            SpeedDialTile("YouTube", "https://www.youtube.com", "▶", -1),
-            SpeedDialTile("mrjobs.top", "https://mrjobs.top", "M", -1),
-            SpeedDialTile("Kitaabcha", "https://kitaabcha.blogspot.com", "K", -1),
-            SpeedDialTile("Wikipedia", "https://www.wikipedia.org", "W", -1)
+            SpeedDialTile("Internet Archive", "https://archive.org", "A", -1),
+            SpeedDialTile("Blender Movies", "https://download.blender.org/demo/movies/", "B", -1),
+            SpeedDialTile("Wikimedia Commons", "https://commons.wikimedia.org", "W", -1)
         )
     }
 }

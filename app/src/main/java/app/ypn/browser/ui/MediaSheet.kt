@@ -206,10 +206,11 @@ fun MediaSheet(
     // Probed sizes by URL: absent while probing, -1 when the server
     // would not say, otherwise the byte count.
     val sizes = remember { mutableStateMapOf<String, Long>() }
-    // The HLS playlist currently opened into its quality list.
+    // The HLS playlist currently opened, and what its fetch found:
+    // null while reading, then variants / a single stream / an
+    // encrypted refusal / a fetch failure (see HlsInfo).
     var openedHls by remember { mutableStateOf<MediaItem?>(null) }
-    var variants by remember { mutableStateOf<List<HlsVariant>?>(null) }
-    var hlsFailed by remember { mutableStateOf(false) }
+    var hlsInfo by remember { mutableStateOf<HlsInfo?>(null) }
 
     // Reading the tab's snapshot list here keeps the sheet live: a
     // stream the page pulls while the sheet is open appears in it.
@@ -230,14 +231,13 @@ fun MediaSheet(
 
     fun openHls(item: MediaItem) {
         openedHls = item
-        variants = null
-        hlsFailed = false
+        hlsInfo = null
         scope.launch {
             val parsed = withContext(Dispatchers.IO) {
-                fetchHlsVariants(item.url, item.pageUrl, userAgent)
+                fetchHlsInfo(item.url, item.pageUrl, userAgent)
             }
             if (openedHls?.url == item.url) {
-                if (parsed == null) hlsFailed = true else variants = parsed
+                hlsInfo = parsed
             }
         }
     }
@@ -340,26 +340,89 @@ fun MediaSheet(
                         )
                     }
                 }
+                val info = hlsInfo
                 when {
-                    hlsFailed -> Text(
-                        text = "Could not read the playlist",
-                        color = palette.muted,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
-                    )
-                    variants == null -> Text(
+                    info == null -> Text(
                         text = "Reading the playlist…",
                         color = palette.muted,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
                     )
+                    info.kind == HlsKind.FAILED -> Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                    ) {
+                        Text(
+                            text = "Could not read the playlist here — the " +
+                                "download engine fetches it again with the " +
+                                "page's own session, which often succeeds.",
+                            color = palette.muted,
+                            fontSize = 12.sp
+                        )
+                        OutlinedButton(
+                            onClick = { onDownloadHls(hls.url, null, hls.pageUrl) },
+                            shape = RoundedCornerShape(9.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = colors.primary
+                            ),
+                            border = BorderStroke(1.dp, colors.primary),
+                            modifier = Modifier.padding(top = 10.dp)
+                        ) {
+                            Text(
+                                text = "Try downloading anyway",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    info.kind == HlsKind.ENCRYPTED -> Text(
+                        text = "This stream is encrypted — it can't be downloaded.",
+                        color = palette.muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+                    )
+                    info.kind == HlsKind.MEDIA -> Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "Single stream",
+                                color = colors.onSurface,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "HLS · one quality, exactly as the site sends it",
+                                color = palette.muted,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(top = 1.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Button(
+                            onClick = { onDownloadHls(hls.url, "HLS", hls.pageUrl) },
+                            shape = RoundedCornerShape(9.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.primary,
+                                contentColor = palette.onAccent
+                            )
+                        ) {
+                            Text(
+                                text = "Download",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                     else -> {
                         // v1.3.2: the 480p lock applies inside HLS
                         // lists too — variants at 480p or below are
                         // hidden. A variant whose playlist wrote no
                         // RESOLUTION stays: its quality is unknowable,
                         // not known-low.
-                        val visibleVariants = variants!!.filter { variant ->
+                        val visibleVariants = info.variants.filter { variant ->
                             val height = variant.quality
                                 ?.removeSuffix("p")?.toIntOrNull()
                             height == null || height > 480
@@ -531,7 +594,7 @@ private val QUALITY_TOKENS = listOf(2160, 1440, 1080, 720, 480, 360, 240)
  * token, or a separator-wrapped number ("_720_", "-720."). No token,
  * no claim — the row then shows the file name instead.
  */
-private fun mediaQualityLabel(url: String): String? {
+internal fun mediaQualityLabel(url: String): String? {
     val text = url.lowercase()
     for (q in QUALITY_TOKENS) {
         if (text.contains("${q}p")) return "${q}p"
@@ -641,22 +704,41 @@ private class HlsVariant(
     val url: String
 )
 
+/** What one playlist fetch found (v1.5 — see [fetchHlsInfo]). */
+private enum class HlsKind { VARIANTS, MEDIA, ENCRYPTED, FAILED }
+
+/** A fetched playlist's verdict; [variants] is set only for VARIANTS. */
+private class HlsInfo(
+    val kind: HlsKind,
+    val variants: List<HlsVariant> = emptyList()
+)
+
 /**
- * Fetch + parse an HLS master playlist into its variant list:
- * each #EXT-X-STREAM-INF's RESOLUTION (→ "720p") and BANDWIDTH
- * (→ bits/sec), with the variant URI resolved against the playlist
- * URL. Null when the fetch fails, the body is not a playlist, or it
- * carries no variants (a media playlist has none to list).
+ * Fetch + classify an HLS playlist (v1.5; replaces fetchHlsVariants,
+ * which reported every non-master playlist as a failure):
+ *
+ *  - VARIANTS — a master playlist; [HlsInfo.variants] carries each
+ *    #EXT-X-STREAM-INF's RESOLUTION (→ "720p") and BANDWIDTH, with
+ *    the variant URI resolved against the playlist URL.
+ *  - MEDIA — a media playlist: no variants, just segments. It is a
+ *    download in its own right (the engine joins the segments), so
+ *    the sheet offers it one instead of the old dead-end "Could
+ *    not read the playlist".
+ *  - ENCRYPTED — an #EXT-X-KEY with a METHOD other than NONE:
+ *    honestly refused, here and in the engine.
+ *  - FAILED — the fetch failed or the body is not a playlist. The
+ *    sheet still offers "Try downloading anyway": the engine
+ *    re-fetches the playlist with the download's own headers.
  */
-private fun fetchHlsVariants(
+private fun fetchHlsInfo(
     playlistUrl: String,
     referer: String,
     userAgent: String?
-): List<HlsVariant>? {
+): HlsInfo {
     val text = try {
         val conn = openMediaConnection(playlistUrl, referer, userAgent)
         try {
-            if (conn.responseCode !in 200..299) return null
+            if (conn.responseCode !in 200..299) return HlsInfo(HlsKind.FAILED)
             conn.inputStream.bufferedReader().use { reader ->
                 val sb = StringBuilder()
                 val buf = CharArray(8192)
@@ -673,9 +755,27 @@ private fun fetchHlsVariants(
             conn.disconnect()
         }
     } catch (e: Exception) {
-        return null
+        return HlsInfo(HlsKind.FAILED)
     }
-    if (!text.contains("#EXTM3U")) return null
+    if (!text.contains("#EXTM3U")) return HlsInfo(HlsKind.FAILED)
+    val keyLine = text.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("#EXT-X-KEY") }
+    if (keyLine != null) {
+        val method = Regex("""METHOD=([^,]+)""").find(keyLine)
+            ?.groupValues?.get(1)?.trim()
+        if (method != null && method != "NONE") return HlsInfo(HlsKind.ENCRYPTED)
+    }
+    if (!text.contains("#EXT-X-STREAM-INF")) {
+        val hasSegments = text.lines()
+            .map { it.trim() }
+            .any { it.isNotEmpty() && !it.startsWith("#") }
+        return if (hasSegments) {
+            HlsInfo(HlsKind.MEDIA)
+        } else {
+            HlsInfo(HlsKind.FAILED)
+        }
+    }
     val variants = mutableListOf<HlsVariant>()
     var pendingAttrs: String? = null
     for (line in text.lines()) {
@@ -700,7 +800,11 @@ private fun fetchHlsVariants(
             }
         }
     }
-    return variants.ifEmpty { null }
+    return if (variants.isEmpty()) {
+        HlsInfo(HlsKind.FAILED)
+    } else {
+        HlsInfo(HlsKind.VARIANTS, variants)
+    }
 }
 
 private const val MEDIA_TIMEOUT_MS = 10_000

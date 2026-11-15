@@ -2,7 +2,6 @@ package app.ypn.browser.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,13 +13,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -47,11 +46,15 @@ import app.ypn.browser.download.formatSpeed
 import app.ypn.browser.ui.theme.LocalYpnPalette
 
 /**
- * Phase 3 Downloads screen: paste-a-URL box on top, then every
- * download (active first) with live progress, the measured Wi-Fi /
- * mobile-data split, and Pause / Resume / Cancel / Open / Delete.
- * Since v1.4 (redesign) an All / Active / Completed chip row filters
- * the list — presentation only; the store and engine are untouched.
+ * Downloads screen: paste-a-URL box on top, then every download
+ * grouped by where it stands — Downloading, Paused, Failed,
+ * Completed (v1.5, replacing the v1.4 filter chips; the grouping
+ * is Vega's lesson: state first, everything about a download on
+ * its own card). Each card carries the file's quality chip when
+ * the fetcher claimed one, live speed and time left while running,
+ * the measured Wi-Fi / mobile-data split in bytes, the plain-words
+ * reason when a download failed, and Pause / Resume / Cancel /
+ * Retry / Open / Delete as its state allows.
  */
 @Composable
 fun DownloadsScreen(
@@ -59,22 +62,17 @@ fun DownloadsScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = MaterialTheme.colorScheme
-    val sorted = downloads.items.sortedWith(
-        compareBy<DownloadItem> { statusRank(it.status) }.thenByDescending { it.createdAt }
-    )
+    val byNewest = downloads.items.sortedByDescending { it.createdAt }
     // The one rename dialog, keyed by download id so only one shows.
     var renameItemId by remember { mutableStateOf<String?>(null) }
-    // v1.4: the chip filter. "Active" is everything not finished —
-    // downloading, waiting, paused and failed all still need the
-    // user or the network, which is what the word promises.
-    var filter by remember { mutableStateOf(DownloadFilter.ALL) }
-    val visible = sorted.filter { item ->
-        when (filter) {
-            DownloadFilter.ALL -> true
-            DownloadFilter.ACTIVE -> item.status != DownloadStatus.COMPLETED
-            DownloadFilter.COMPLETED -> item.status == DownloadStatus.COMPLETED
-        }
-    }
+    val groups = listOf(
+        "Downloading" to byNewest.filter {
+            it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.QUEUED
+        },
+        "Paused" to byNewest.filter { it.status == DownloadStatus.PAUSED },
+        "Failed" to byNewest.filter { it.status == DownloadStatus.FAILED },
+        "Completed" to byNewest.filter { it.status == DownloadStatus.COMPLETED }
+    ).filter { it.second.isNotEmpty() }
 
     Column(
         modifier = modifier
@@ -90,32 +88,14 @@ fun DownloadsScreen(
             modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 6.dp)
         )
         AddUrlRow(downloads = downloads)
-        Row(
-            modifier = Modifier.padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            DownloadFilter.entries.forEach { entry ->
-                FilterChip(
-                    selected = filter == entry,
-                    onClick = { filter = entry },
-                    label = { Text(entry.label) }
-                )
-            }
-        }
         if (downloads.accelerationEnabled && downloads.hasActiveDownloads()) {
             PathStatusLine(downloads = downloads)
         }
-        if (visible.isEmpty()) {
+        if (byNewest.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = when {
-                        sorted.isEmpty() ->
-                            "No downloads yet.\nFiles you download while browsing, and URLs you paste above, appear here."
-                        filter == DownloadFilter.ACTIVE ->
-                            "Nothing is downloading right now."
-                        else ->
-                            "No completed downloads yet."
-                    },
+                    text = "No downloads yet.\nFiles you download while browsing, " +
+                        "and URLs you paste above, appear here.",
                     color = LocalYpnPalette.current.muted,
                     fontSize = 13.sp
                 )
@@ -124,14 +104,19 @@ fun DownloadsScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 10.dp)
+                    .padding(top = 4.dp)
             ) {
-                items(visible, key = { it.id }) { item ->
-                    DownloadRow(
-                        item = item,
-                        downloads = downloads,
-                        onRename = { renameItemId = item.id }
-                    )
+                for ((title, group) in groups) {
+                    item(key = "header-$title") {
+                        SectionHeader(title = title, count = group.size)
+                    }
+                    items(group, key = { it.id }) { item ->
+                        DownloadRow(
+                            item = item,
+                            downloads = downloads,
+                            onRename = { renameItemId = item.id }
+                        )
+                    }
                 }
             }
         }
@@ -152,19 +137,16 @@ fun DownloadsScreen(
     }
 }
 
-/** v1.4: the Downloads screen's chip filter (see [DownloadsScreen]). */
-private enum class DownloadFilter(val label: String) {
-    ALL("All"),
-    ACTIVE("Active"),
-    COMPLETED("Completed")
-}
-
-private fun statusRank(status: DownloadStatus): Int = when (status) {
-    DownloadStatus.DOWNLOADING -> 0
-    DownloadStatus.QUEUED -> 1
-    DownloadStatus.PAUSED -> 2
-    DownloadStatus.FAILED -> 3
-    DownloadStatus.COMPLETED -> 4
+/** A status group's header: "Paused · 3". */
+@Composable
+private fun SectionHeader(title: String, count: Int) {
+    Text(
+        text = "$title · $count",
+        color = MaterialTheme.colorScheme.onBackground,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp)
+    )
 }
 
 @Composable
@@ -221,14 +203,33 @@ private fun DownloadRow(
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outline)
     ) {
         Column(Modifier.padding(13.dp)) {
-            Text(
-                text = item.fileName,
-                color = colors.onSurface,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = item.fileName,
+                    color = colors.onSurface,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                item.quality?.takeIf { it.isNotBlank() }?.let { quality ->
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(colors.primary.copy(alpha = 0.15f))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = quality,
+                            color = colors.primary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
             Text(
                 text = statusLine(item),
                 color = if (item.status == DownloadStatus.FAILED) colors.error else palette.muted,
@@ -237,6 +238,14 @@ private fun DownloadRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            if (item.linkRefreshing) {
+                Text(
+                    text = "Refreshing link — fetching a fresh one from the page…",
+                    color = colors.primary,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
 
             if (item.status != DownloadStatus.COMPLETED) {
                 if (item.totalBytes > 0) {
@@ -348,24 +357,83 @@ private fun statusLine(item: DownloadItem): String {
     return when (item.status) {
         DownloadStatus.QUEUED -> "Waiting…"
         DownloadStatus.DOWNLOADING -> buildString {
-            if (item.totalBytes > 0) {
+            if (item.hls && item.totalBytes <= 0 && item.hlsSegmentCount > 0) {
+                append(
+                    "Segment ${item.hlsSegmentsDone} of ${item.hlsSegmentCount}" +
+                        " · $downloaded downloaded"
+                )
+            } else if (item.totalBytes > 0) {
                 append("$downloaded of $total · ${(item.percent * 100).toInt()}%")
             } else {
                 append("$downloaded downloaded")
             }
             if (item.speedBps > 0) {
                 append(" · ${formatSpeed(item.speedBps)}")
+                etaText(item)?.let { append(" · $it") }
                 if (item.dualNetwork) {
                     append(" (Wi-Fi ${formatSpeed(item.wifiSpeedBps)}")
                     append(" · Data ${formatSpeed(item.cellSpeedBps)})")
                 }
             }
         }
-        DownloadStatus.PAUSED ->
-            if (item.totalBytes > 0) "Paused · $downloaded of $total saved"
-            else "Paused · $downloaded saved"
-        DownloadStatus.FAILED -> item.error ?: "Download failed"
+        DownloadStatus.PAUSED -> when {
+            item.hls && item.totalBytes <= 0 && item.hlsSegmentCount > 0 ->
+                "Paused · segment ${item.hlsSegmentsDone} of " +
+                    "${item.hlsSegmentCount} · $downloaded saved"
+            item.totalBytes > 0 -> "Paused · $downloaded of $total saved"
+            else -> "Paused · $downloaded saved"
+        }
+        DownloadStatus.FAILED -> plainReason(item.error)
         DownloadStatus.COMPLETED -> "Done · $total"
+    }
+}
+
+/** "≈ 12 min left" from the live speed; null while it can't be estimated. */
+private fun etaText(item: DownloadItem): String? {
+    if (item.totalBytes <= 0 || item.speedBps <= 0) return null
+    val remaining = item.totalBytes - item.downloadedBytes
+    if (remaining <= 0) return null
+    val secs = remaining / item.speedBps
+    return when {
+        secs < 60 -> "< 1 min left"
+        secs < 3600 -> "≈ ${secs / 60} min left"
+        else -> "≈ ${secs / 3600} h ${(secs % 3600) / 60} min left"
+    }
+}
+
+/**
+ * v1.5: a failed download's reason in plain words. The engine's own
+ * already-plain messages (stall, expired link, encrypted, deleted
+ * file) pass through; raw HTTP and network errors are translated.
+ */
+private fun plainReason(raw: String?): String {
+    val text = raw?.trim().orEmpty()
+    if (text.isEmpty()) return "Download failed"
+    return when {
+        text.contains("HTTP 403") ->
+            "The site refused this link — it may have expired. " +
+                "Tap Retry, or open the page again and start fresh."
+        text.contains("HTTP 410") ->
+            "This link has expired. Open the page again and start the download fresh."
+        text.contains("HTTP 404") ->
+            "The file is no longer on the site (404)."
+        text.contains("Unable to resolve host") ->
+            "The site could not be reached — check your connection, then tap Retry."
+        text.contains("timed out", ignoreCase = true) ||
+            text.contains("timeout", ignoreCase = true) ->
+            "The connection timed out — the network is slow or the " +
+                "site stopped answering. Tap Retry."
+        text.contains("Connection closed early") ->
+            "The site closed the connection early. Tap Retry to continue."
+        text.contains("HTTP ") -> {
+            val code = Regex("""HTTP (\d{3})""").find(text)?.groupValues?.get(1)
+            if (code != null) {
+                "The site answered with an error (HTTP $code). Tap Retry."
+            } else {
+                text
+            }
+        }
+        else -> text
     }
 }
 
@@ -407,13 +475,19 @@ private fun SplitBar(item: DownloadItem) {
     }
     Row(modifier = Modifier.padding(top = 6.dp)) {
         if (item.wifiBytes > 0) {
-            SplitLegend(color = palette.wifi, label = "Wi-Fi · ${(wifiShare * 100).toInt()}%")
+            SplitLegend(
+                color = palette.wifi,
+                label = "Wi-Fi · ${formatBytes(item.wifiBytes)} · ${(wifiShare * 100).toInt()}%"
+            )
         }
         if (item.wifiBytes > 0 && item.cellBytes > 0) {
             Spacer(Modifier.width(12.dp))
         }
         if (item.cellBytes > 0) {
-            SplitLegend(color = palette.data, label = "Mobile Data · ${(cellShare * 100).toInt()}%")
+            SplitLegend(
+                color = palette.data,
+                label = "Mobile Data · ${formatBytes(item.cellBytes)} · ${(cellShare * 100).toInt()}%"
+            )
         }
         Spacer(Modifier.weight(1f))
         if (!item.dualNetwork && item.downloadedBytes > 0) {

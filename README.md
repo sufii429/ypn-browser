@@ -2,7 +2,7 @@
 
 **YPN · Your Personal Network — two networks, one fast download.**
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue)
+![Version](https://img.shields.io/badge/version-1.5.0-blue)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-green)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.0-purple)
 

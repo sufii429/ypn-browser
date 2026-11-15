@@ -37,14 +37,16 @@ class ChunkProgress(
 }
 
 /**
- * One download. Identity and request data are fixed at enqueue time;
- * everything the UI reads is Compose snapshot state, updated by the
- * engine (from IO threads — snapshot state is safe for that). Plain
- * fields ([ranged], [chunks]) are engine/store bookkeeping only.
+ * One download. Identity and request data are fixed at enqueue time
+ * (the one exception is [url], which a link refresh may replace —
+ * see its doc); everything the UI reads is Compose snapshot state,
+ * updated by the engine (from IO threads — snapshot state is safe
+ * for that). Plain fields ([ranged], [chunks]) are engine/store
+ * bookkeeping only.
  */
 class DownloadItem(
     val id: String,
-    val url: String,
+    url: String,
     fileName: String,
     val mimeType: String?,
     val userAgent: String?,
@@ -65,8 +67,26 @@ class DownloadItem(
      * file instead of probing/transferring the URL as a plain file.
      * See DownloadController.runHlsDownload.
      */
-    val hls: Boolean = false
+    val hls: Boolean = false,
+    /**
+     * v1.5: the quality label the fetcher showed for this download
+     * ("1080p", "HLS", …) when it knew one — the Downloads screen
+     * wears it as a chip. Null for browser/pasted downloads, where
+     * no quality was ever claimed.
+     */
+    val quality: String? = null
 ) {
+    /**
+     * The URL the engine fetches. A var since v1.5 (was a val): when
+     * a signed link dies mid-download (HTTP 403/410), the controller
+     * re-resolves a fresh one from the linking page and swaps it in,
+     * so the transfer resumes from its checkpoint instead of
+     * failing. Volatile because chunk workers read it per connection
+     * while the refresher may rewrite it.
+     */
+    @Volatile
+    var url: String = url
+
     /** Final file name inside the downloads folder (collision-free). */
     var fileName by mutableStateOf(fileName)
 
@@ -89,6 +109,14 @@ class DownloadItem(
     var dualNetwork by mutableStateOf(false)
 
     var error by mutableStateOf<String?>(null)
+
+    /**
+     * v1.5: true while the engine is re-resolving a fresh link for
+     * this download (the old one died with HTTP 403/410). Transient
+     * run state for the Downloads screen's "Refreshing link…" line —
+     * never persisted.
+     */
+    var linkRefreshing by mutableStateOf(false)
 
     /** True when the server accepted Range requests (chunked mode). */
     var ranged: Boolean = false
