@@ -699,10 +699,31 @@ class DownloadController private constructor(context: Context) {
                 // probe/setup time never counts.
                 session.lastProgressAtMs = System.currentTimeMillis()
                 coroutineScope {
-                    val workers = workerRoles().map { role ->
-                        launch { chunkWorker(session, role) }
+                    // v1.6 adaptive concurrency: the classic four
+                    // workers start; the ramp may add more (up to
+                    // MAX_WORKERS) while every path keeps delivering,
+                    // and stops adding — letting surplus workers
+                    // retire — when the server pushes back with
+                    // 429/503 answers. The scope itself waits for
+                    // every child, ramp included, so the joins below
+                    // are only over the starting set.
+                    val workers =
+                        Collections.synchronizedList(mutableListOf<Job>())
+                    val launchedRoles = mutableMapOf<NetKind?, Int>()
+                    val spawn: (NetKind?) -> Unit = { role ->
+                        session.workerUp()
+                        val job = launch { chunkWorker(session, role) }
+                        job.invokeOnCompletion { session.workerDown() }
+                        workers += job
+                        synchronized(launchedRoles) {
+                            launchedRoles[role] =
+                                (launchedRoles[role] ?: 0) + 1
+                        }
                     }
-                    workers.forEach { it.join() }
+                    workerRoles().forEach(spawn)
+                    launch { adaptiveRamp(session, launchedRoles, spawn) }
+                    synchronized(workers) { workers.toList() }
+                        .forEach { it.join() }
                 }
                 !session.stopped && session.failReason == null &&
                     synchronized(item.ioLock) { item.chunks.all { it.complete } }
@@ -837,11 +858,15 @@ class DownloadController private constructor(context: Context) {
         synchronized(item.ioLock) {
             if (item.chunks.isEmpty()) {
                 val total = item.totalBytes
-                val chunkSize = if (total / CHUNK_BYTES > MAX_CHUNKS) {
-                    (total + MAX_CHUNKS - 1) / MAX_CHUNKS
-                } else {
-                    CHUNK_BYTES
-                }
+                // v1.6 adaptive sizing: aim for about TARGET_CHUNKS
+                // chunks, clamped — a small file gets fine-grained
+                // chunks (cheap resume), a huge one gets big chunks
+                // (a bounded table), and tail-splitting still evens
+                // out the end of the run. A resumed download keeps
+                // the chunk table it was saved with; the sizing
+                // only ever applies to a fresh table.
+                val chunkSize = (total / TARGET_CHUNKS)
+                    .coerceIn(MIN_CHUNK_BYTES, MAX_CHUNK_BYTES)
                 var index = 0
                 var start = 0L
                 while (start < total) {
@@ -904,6 +929,13 @@ class DownloadController private constructor(context: Context) {
                 // there is work again. (fail() sets stopped, so a
                 // failed session also ends the wait.)
                 if (synchronized(item.ioLock) { item.chunks.all { it.complete } }) return
+                // v1.6: the ramp lowered the target (the server is
+                // throttling) — a surplus worker leaves from this
+                // idle point instead of competing for chunks. No
+                // connection is ever cut mid-chunk; the run simply
+                // converges on fewer workers, and the ramp can
+                // still add workers back if conditions improve.
+                if (session.activeWorkers > session.targetWorkers) return
                 delay(CLAIM_WAIT_MS)
                 continue
             }
@@ -1088,6 +1120,14 @@ class DownloadController private constructor(context: Context) {
                 // itself died (not just this path) — flag it for the
                 // sampler's link refresh.
                 if (code == 403 || code == 410) session.linkDeadCode = code
+                // v1.6: a 429/503 is the server pushing back on
+                // concurrency itself — the adaptive ramp counts
+                // these and stops adding workers (and lets surplus
+                // ones retire) instead of angering the host.
+                if (code == 429 || code == 503) {
+                    session.throttleHits++
+                    session.lastThrottleAtMs = System.currentTimeMillis()
+                }
                 throw IOException("HTTP $code on a range request")
             }
             val kind = pool.kindOf(network)
@@ -1538,6 +1578,82 @@ class DownloadController private constructor(context: Context) {
     }
 
     /** ~2 Hz speed sampling (EMA-smoothed) + periodic persistence. */
+    /**
+     * v1.6 adaptive concurrency, run alongside the chunk workers of
+     * one ranged transfer. Every [RAMP_EVAL_MS] it re-reads the
+     * run's vital signs — the sampler's per-path speeds, the
+     * throttle answers the workers recorded, how much work is
+     * left — and steers [RunSession.targetWorkers]: up toward
+     * [MAX_WORKERS] while the server keeps accepting connections
+     * and bytes keep flowing, down (never below
+     * [MIN_TARGET_WORKERS]) when 429/503 answers appear. Workers
+     * are only ever ADDED here; a lowered target takes effect as
+     * surplus workers reach the idle point of their claim loop and
+     * retire themselves, so the ramp never cuts a connection
+     * mid-chunk.
+     */
+    private suspend fun adaptiveRamp(
+        session: RunSession,
+        launchedRoles: MutableMap<NetKind?, Int>,
+        spawn: (NetKind?) -> Unit
+    ) {
+        val item = session.item
+        var lastThrottleHits = session.throttleHits
+        var lastThrottleAtMs = 0L
+        while (!session.stopped) {
+            delay(RAMP_EVAL_MS)
+            if (session.stopped) return
+            val unfinished = synchronized(item.ioLock) {
+                item.chunks.count { !it.complete }
+            }
+            if (unfinished == 0) return
+            val hits = session.throttleHits
+            if (hits > lastThrottleHits) {
+                lastThrottleHits = hits
+                lastThrottleAtMs = System.currentTimeMillis()
+                session.targetWorkers = maxOf(
+                    MIN_TARGET_WORKERS, session.targetWorkers - 2
+                )
+                continue
+            }
+            val now = System.currentTimeMillis()
+            if (session.targetWorkers < MAX_WORKERS &&
+                session.activeWorkers >= session.targetWorkers &&
+                item.speedBps > 0 &&
+                now - lastThrottleAtMs >= RAMP_EVAL_MS * 4
+            ) {
+                session.targetWorkers++
+            }
+            while (session.activeWorkers < session.targetWorkers &&
+                unfinished > session.activeWorkers
+            ) {
+                spawn(rampRole(session, launchedRoles))
+            }
+        }
+    }
+
+    /** The role a ramp-added worker should run under. */
+    private fun rampRole(
+        session: RunSession,
+        launchedRoles: Map<NetKind?, Int>
+    ): NetKind? {
+        if (!accelerationEnabled) return null
+        val item = session.item
+        val wifiCount = launchedRoles[NetKind.WIFI] ?: 0
+        val cellCount = launchedRoles[NetKind.CELL] ?: 0
+        // Per-worker yield of each path. A path that has delivered
+        // nothing scores zero and stops attracting new workers —
+        // the healthy path takes the extra hands instead.
+        val wifiScore = item.wifiSpeedBps / maxOf(1, wifiCount)
+        val cellScore = item.cellSpeedBps / maxOf(1, cellCount)
+        return when {
+            wifiScore > cellScore -> NetKind.WIFI
+            cellScore > wifiScore -> NetKind.CELL
+            wifiCount <= cellCount -> NetKind.WIFI
+            else -> NetKind.CELL
+        }
+    }
+
     private suspend fun samplerLoop(session: RunSession) {
         val item = session.item
         var lastTotal = item.downloadedBytes
@@ -1690,8 +1806,12 @@ class DownloadController private constructor(context: Context) {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val BUFFER_SIZE = 64 * 1024
-        private const val CHUNK_BYTES = 2L * 1024 * 1024
-        private const val MAX_CHUNKS = 128L
+        private const val TARGET_CHUNKS = 64L
+        private const val MIN_CHUNK_BYTES = 512L * 1024
+        private const val MAX_CHUNK_BYTES = 8L * 1024 * 1024
+        private const val MAX_WORKERS = 8
+        private const val MIN_TARGET_WORKERS = 2
+        private const val RAMP_EVAL_MS = 2_500L
         private const val MAX_CHUNK_ATTEMPTS = 3
         private const val ROLE_SWAP_FAILURES = 3
         private const val MAX_PATH_ERROR_CHARS = 60
@@ -1748,6 +1868,40 @@ private class RunSession(val item: DownloadItem) {
     /** v1.5: this run's one link refresh has been spent. */
     @Volatile
     var linkRefreshTried: Boolean = false
+
+    /**
+     * v1.6: chunk workers currently running in this session,
+     * counted by the launch site (up on launch, down on the job's
+     * completion). The adaptive ramp steers by this number.
+     */
+    @Volatile
+    var activeWorkers: Int = 0
+
+    @Synchronized
+    fun workerUp() {
+        activeWorkers++
+    }
+
+    @Synchronized
+    fun workerDown() {
+        activeWorkers--
+    }
+
+    /**
+     * v1.6: the worker count the adaptive ramp is steering
+     * toward. Starts at the classic four; the ramp raises it
+     * toward the cap while every path delivers, and lowers it
+     * (never below the floor) when the server throttles.
+     */
+    @Volatile
+    var targetWorkers: Int = 4
+
+    /** v1.6: 429/503 answers seen in this run, and the latest one's time. */
+    @Volatile
+    var throttleHits: Int = 0
+
+    @Volatile
+    var lastThrottleAtMs: Long = 0L
 
     /** Chunk indices handed out in this run; guarded by itself. */
     val claimed = mutableSetOf<Int>()
