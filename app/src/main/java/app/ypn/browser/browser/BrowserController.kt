@@ -28,7 +28,7 @@ import app.ypn.browser.download.DownloadController
 import java.net.URLEncoder
 
 /** What the v1.3 fetcher recognised in a page's requests. */
-enum class MediaKind { VIDEO_FILE, HLS }
+enum class MediaKind { VIDEO_FILE, HLS, DASH }
 
 /**
  * One media candidate the fetcher sniffed on a tab's current page
@@ -237,6 +237,7 @@ class BrowserController(context: Context, private val downloads: DownloadControl
             path.endsWith(".mp4") || path.endsWith(".webm") ||
                 path.endsWith(".mkv") -> MediaKind.VIDEO_FILE
             path.endsWith(".m3u8") -> MediaKind.HLS
+            path.endsWith(".mpd") -> MediaKind.DASH
             else -> return
         }
         if (kind == MediaKind.VIDEO_FILE) {

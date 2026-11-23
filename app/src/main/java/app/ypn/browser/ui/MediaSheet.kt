@@ -55,6 +55,7 @@ import app.ypn.browser.browser.BrowserTab
 import app.ypn.browser.browser.LinkMenuRequest
 import app.ypn.browser.browser.MediaItem
 import app.ypn.browser.browser.MediaKind
+import app.ypn.browser.download.MpdParser
 import app.ypn.browser.download.formatBytes
 import app.ypn.browser.ui.theme.LocalYpnPalette
 import kotlinx.coroutines.Dispatchers
@@ -196,7 +197,8 @@ fun MediaSheet(
     userAgent: String?,
     onDismissRequest: () -> Unit,
     onDownload: (MediaItem) -> Unit,
-    onDownloadHls: (variantUrl: String, quality: String?, referer: String) -> Unit
+    onDownloadHls: (variantUrl: String, quality: String?, referer: String) -> Unit,
+    onDownloadDash: (manifestUrl: String, quality: String?, referer: String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val palette = LocalYpnPalette.current
@@ -211,6 +213,10 @@ fun MediaSheet(
     // encrypted refusal / a fetch failure (see HlsInfo).
     var openedHls by remember { mutableStateOf<MediaItem?>(null) }
     var hlsInfo by remember { mutableStateOf<HlsInfo?>(null) }
+    // The DASH manifest currently opened, and what its fetch
+    // found — the same rhythm as the HLS pair above.
+    var openedDash by remember { mutableStateOf<MediaItem?>(null) }
+    var dashInfo by remember { mutableStateOf<DashInfo?>(null) }
 
     // Reading the tab's snapshot list here keeps the sheet live: a
     // stream the page pulls while the sheet is open appears in it.
@@ -242,6 +248,19 @@ fun MediaSheet(
         }
     }
 
+    fun openDash(item: MediaItem) {
+        openedDash = item
+        dashInfo = null
+        scope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                fetchDashInfo(item.url, item.pageUrl, userAgent)
+            }
+            if (openedDash?.url == item.url) {
+                dashInfo = parsed
+            }
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
@@ -254,7 +273,15 @@ fun MediaSheet(
                 .padding(bottom = 10.dp)
         ) {
             val hls = openedHls
-            if (hls == null) {
+            val dash = openedDash
+            if (dash != null) {
+                DashDetailView(
+                    item = dash,
+                    info = dashInfo,
+                    onBack = { openedDash = null },
+                    onDownloadDash = onDownloadDash
+                )
+            } else if (hls == null) {
                 Text(
                     text = "Videos on this page",
                     color = colors.onSurface,
@@ -294,6 +321,9 @@ fun MediaSheet(
                                 )
                                 MediaKind.HLS -> MediaHlsRow(
                                     onOpen = { openHls(item) }
+                                )
+                                MediaKind.DASH -> MediaDashRow(
+                                    onOpen = { openDash(item) }
                                 )
                             }
                             HorizontalDivider(
@@ -805,6 +835,320 @@ private fun fetchHlsInfo(
     } else {
         HlsInfo(HlsKind.VARIANTS, variants)
     }
+}
+
+/** One DASH row: the manifest itself, opening into its quality list. */
+@Composable
+private fun MediaDashRow(onOpen: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "Auto · DASH",
+                color = colors.onSurface,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Stream manifest · qualities inside",
+                color = palette.muted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 1.dp)
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        OutlinedButton(
+            onClick = onOpen,
+            shape = RoundedCornerShape(9.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
+            border = BorderStroke(1.dp, colors.primary)
+        ) {
+            Text(text = "Open", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** The DASH detail: a manifest's qualities, or its honest refusal. */
+@Composable
+private fun DashDetailView(
+    item: MediaItem,
+    info: DashInfo?,
+    onBack: () -> Unit,
+    onDownloadDash: (manifestUrl: String, quality: String?, referer: String) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalYpnPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back to videos",
+                tint = colors.onSurface
+            )
+        }
+        Column {
+            Text(
+                text = "Stream qualities",
+                color = colors.onSurface,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = mediaDisplayName(item.url),
+                color = palette.muted,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+    when {
+        info == null -> Text(
+            text = "Reading the manifest…",
+            color = palette.muted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+        )
+        info.kind == DashKind.FAILED -> Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
+            Text(
+                text = "Could not read the manifest here — the " +
+                    "download engine fetches it again with the " +
+                    "page's own session, which often succeeds.",
+                color = palette.muted,
+                fontSize = 12.sp
+            )
+            OutlinedButton(
+                onClick = { onDownloadDash(item.url, null, item.pageUrl) },
+                shape = RoundedCornerShape(9.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = colors.primary
+                ),
+                border = BorderStroke(1.dp, colors.primary),
+                modifier = Modifier.padding(top = 10.dp)
+            ) {
+                Text(
+                    text = "Try downloading anyway",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        info.kind == DashKind.DRM -> Text(
+            text = "This stream is protected (DRM) — it can't be downloaded.",
+            color = palette.muted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+        )
+        info.kind == DashKind.LIVE -> Text(
+            text = "This is a live stream — recording isn't supported yet.",
+            color = palette.muted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+        )
+        else -> {
+            // The 480p lock applies inside DASH lists too, as in
+            // HLS: known-low qualities hide; an unknown height
+            // (the manifest wrote none) stays.
+            val visible = info.variants.filter { it.height == 0 || it.height > 480 }
+            if (visible.isEmpty()) {
+                Text(
+                    text = "No qualities above 480p in this stream.",
+                    color = palette.muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .padding(top = 6.dp)
+                ) {
+                    items(visible, key = { it.height }) { variant ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = variant.quality ?: "Best quality",
+                                    color = colors.onSurface,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = buildString {
+                                        if (variant.bandwidth > 0) {
+                                            append(
+                                                String.format(
+                                                    Locale.US,
+                                                    "≈ %.1f Mbps",
+                                                    variant.bandwidth / 1_000_000.0
+                                                )
+                                            )
+                                        }
+                                        variant.estBytes?.let {
+                                            if (isNotEmpty()) append(" · ")
+                                            append("~" + formatBytes(it))
+                                        }
+                                        if (isNotEmpty()) append(" · ")
+                                        append("DASH")
+                                    },
+                                    color = palette.muted,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(top = 1.dp)
+                                )
+                                if (info.hasSeparateAudio && !variant.singleFile) {
+                                    Text(
+                                        text = "Sound is a separate track — " +
+                                            "this download is video only for now",
+                                        color = palette.muted,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(top = 1.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Button(
+                                onClick = {
+                                    onDownloadDash(
+                                        item.url,
+                                        variant.quality,
+                                        item.pageUrl
+                                    )
+                                },
+                                shape = RoundedCornerShape(9.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = colors.primary,
+                                    contentColor = palette.onAccent
+                                )
+                            ) {
+                                Text(
+                                    text = "Download",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        HorizontalDivider(
+                            color = colors.outline,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One video quality inside a DASH manifest. */
+private class DashVariant(
+    val height: Int,
+    val bandwidth: Long,
+    val singleFile: Boolean,
+    val estBytes: Long?
+) {
+    val quality: String? get() = if (height > 0) "${height}p" else null
+}
+
+/** What one manifest fetch found (v1.6 — see [fetchDashInfo]). */
+private enum class DashKind { VARIANTS, DRM, LIVE, FAILED }
+
+/** A fetched manifest's verdict; [variants] is set only for VARIANTS. */
+private class DashInfo(
+    val kind: DashKind,
+    val variants: List<DashVariant> = emptyList(),
+    val hasSeparateAudio: Boolean = false
+)
+
+/**
+ * Fetch + classify a DASH manifest (v1.6), the HLS fetch's twin:
+ *
+ *  - VARIANTS — usable video representations, best bandwidth per
+ *    height, with a size estimate from bandwidth × duration.
+ *  - DRM — every video representation is ContentProtection'd.
+ *  - LIVE — a dynamic manifest; recording one is not supported.
+ *  - FAILED — the fetch failed or the body is not a manifest.
+ *    The sheet still offers "Try downloading anyway": the engine
+ *    re-fetches the manifest with the download's own headers.
+ */
+private fun fetchDashInfo(
+    manifestUrl: String,
+    referer: String,
+    userAgent: String?
+): DashInfo {
+    val text = try {
+        val conn = openMediaConnection(manifestUrl, referer, userAgent)
+        try {
+            if (conn.responseCode !in 200..299) return DashInfo(DashKind.FAILED)
+            conn.inputStream.bufferedReader().use { reader ->
+                val sb = StringBuilder()
+                val buf = CharArray(8192)
+                var total = 0
+                while (total < MAX_PLAYLIST_CHARS) {
+                    val read = reader.read(buf)
+                    if (read < 0) break
+                    sb.append(buf, 0, read)
+                    total += read
+                }
+                sb.toString()
+            }
+        } finally {
+            conn.disconnect()
+        }
+    } catch (e: Exception) {
+        return DashInfo(DashKind.FAILED)
+    }
+    val mpd = try {
+        MpdParser.parse(text, manifestUrl)
+    } catch (e: Exception) {
+        return DashInfo(DashKind.FAILED)
+    }
+    if (mpd.isLive) return DashInfo(DashKind.LIVE)
+    val usable = mpd.video.filter { !it.drm }
+    if (usable.isEmpty()) {
+        return if (mpd.video.any { it.drm }) {
+            DashInfo(DashKind.DRM)
+        } else {
+            DashInfo(DashKind.FAILED)
+        }
+    }
+    val variants = usable
+        .groupBy { it.height }
+        .map { (_, reps) -> reps.maxByOrNull { it.bandwidth } ?: reps.first() }
+        .sortedByDescending { it.bandwidth }
+        .map { rep ->
+            DashVariant(
+                height = rep.height,
+                bandwidth = rep.bandwidth,
+                singleFile = rep.singleFile,
+                estBytes = if (rep.bandwidth > 0 && mpd.durationSec > 0) {
+                    (rep.bandwidth * mpd.durationSec / 8).toLong()
+                } else {
+                    null
+                }
+            )
+        }
+    return DashInfo(
+        kind = DashKind.VARIANTS,
+        variants = variants,
+        hasSeparateAudio = mpd.hasSeparateAudio
+    )
 }
 
 private const val MEDIA_TIMEOUT_MS = 10_000

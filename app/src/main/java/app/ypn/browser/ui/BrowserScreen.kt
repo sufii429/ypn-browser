@@ -169,6 +169,23 @@ fun BrowserScreen(
                 )
                 Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 onMediaSheetOpenChange(false)
+            },
+            onDownloadDash = { url, quality, referer ->
+                // v1.6: a picked DASH quality — the engine parses
+                // the manifest, joins the representation's segments
+                // into one MP4 file, hence .mp4.
+                downloads.enqueueDash(
+                    url = url,
+                    suggestedName = "video_" + (quality ?: "stream") + ".mp4",
+                    referer = referer.ifBlank { null },
+                    userAgent = controller.lastUserAgent,
+                    cookie = runCatching {
+                        CookieManager.getInstance().getCookie(url)
+                    }.getOrNull(),
+                    quality = quality
+                )
+                Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                onMediaSheetOpenChange(false)
             }
         )
     }

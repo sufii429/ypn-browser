@@ -356,7 +356,7 @@ private fun statusLine(item: DownloadItem): String {
     return when (item.status) {
         DownloadStatus.QUEUED -> "Waiting…"
         DownloadStatus.DOWNLOADING -> buildString {
-            if (item.hls && item.totalBytes <= 0 && item.hlsSegmentCount > 0) {
+            if ((item.hls || item.dash) && item.totalBytes <= 0 && item.hlsSegmentCount > 0) {
                 append(
                     "Segment ${item.hlsSegmentsDone} of ${item.hlsSegmentCount}" +
                         " · $downloaded downloaded"
@@ -376,7 +376,7 @@ private fun statusLine(item: DownloadItem): String {
             }
         }
         DownloadStatus.PAUSED -> when {
-            item.hls && item.totalBytes <= 0 && item.hlsSegmentCount > 0 ->
+            (item.hls || item.dash) && item.totalBytes <= 0 && item.hlsSegmentCount > 0 ->
                 "Paused · segment ${item.hlsSegmentsDone} of " +
                     "${item.hlsSegmentCount} · $downloaded saved"
             item.totalBytes > 0 -> "Paused · $downloaded of $total saved"

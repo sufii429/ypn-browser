@@ -68,6 +68,8 @@ class DownloadItem(
      * See DownloadController.runHlsDownload.
      */
     val hls: Boolean = false,
+    /** v1.6: a DASH (MPD) download — the engine joins its segments like HLS. */
+    val dash: Boolean = false,
     /**
      * v1.5: the quality label the fetcher showed for this download
      * ("1080p", "HLS", …) when it knew one — the Downloads screen

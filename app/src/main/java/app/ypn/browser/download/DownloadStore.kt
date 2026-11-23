@@ -42,6 +42,7 @@ class DownloadStore(context: Context) {
                     createdAt = o.optLong("created"),
                     referer = o.optString("referer").ifEmpty { null },
                     hls = o.optBoolean("hls", false),
+                    dash = o.optBoolean("d", false),
                     quality = o.optString("q").ifEmpty { null }
                 )
                 item.hlsSegmentsDone = o.optInt("hlsDone", 0)
@@ -95,6 +96,7 @@ class DownloadStore(context: Context) {
                 .put("cookie", item.cookie ?: "")
                 .put("referer", item.referer ?: "")
                 .put("hls", item.hls)
+                .put("d", item.dash)
                 .put("q", item.quality ?: "")
                 .put("hlsDone", item.hlsSegmentsDone)
                 .put("hlsCount", item.hlsSegmentCount)

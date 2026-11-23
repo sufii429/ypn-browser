@@ -181,7 +181,7 @@ class DownloadController private constructor(context: Context) {
                     // the saved counters would describe bytes that
                     // aren't there.
                     val part = File(dir, item.partFileName)
-                    if (item.hls) {
+                    if (item.hls || item.dash) {
                         // An HLS item's .part length always equals
                         // its downloadedBytes (the engine rolls a
                         // half-written segment back out). A longer
@@ -356,6 +356,34 @@ class DownloadController private constructor(context: Context) {
         )
     }
 
+    /**
+     * v1.6: enqueue a DASH stream the user picked in the media
+     * sheet. [url] is the MPD manifest; the engine parses it,
+     * re-selects the representation matching [quality] (or the
+     * best one), and joins its segments into a single MP4 file
+     * under [suggestedName]. Same referer / UA / cookie trio as
+     * [enqueueHls] — segment requests carry exactly those headers.
+     */
+    fun enqueueDash(
+        url: String,
+        suggestedName: String,
+        referer: String?,
+        userAgent: String?,
+        cookie: String? = null,
+        quality: String? = null
+    ) {
+        enqueue(
+            url = url,
+            suggestedName = suggestedName,
+            mimeType = null,
+            userAgent = userAgent,
+            cookie = cookie,
+            referer = referer,
+            dash = true,
+            quality = quality
+        )
+    }
+
     private fun enqueue(
         url: String,
         suggestedName: String,
@@ -364,6 +392,7 @@ class DownloadController private constructor(context: Context) {
         cookie: String?,
         referer: String?,
         hls: Boolean = false,
+        dash: Boolean = false,
         quality: String? = null
     ) {
         val item = DownloadItem(
@@ -376,6 +405,7 @@ class DownloadController private constructor(context: Context) {
             createdAt = System.currentTimeMillis(),
             referer = referer,
             hls = hls,
+            dash = dash,
             quality = quality
         )
         items.add(0, item)
@@ -680,6 +710,11 @@ class DownloadController private constructor(context: Context) {
     /** One raw transfer attempt: HLS join, chunked ranges, or one stream. */
     private suspend fun attemptTransfer(session: RunSession): Boolean {
         val item = session.item
+        if (item.dash) {
+            // v1.6: a manifest URL is not a file either — the DASH
+            // path fetches and parses the MPD itself.
+            return runDashDownload(session)
+        }
         if (item.hls) {
             // v1.3.2: a playlist URL is not a file — the HTTP probe
             // must never run on it. The HLS path fetches the playlist
@@ -1409,6 +1444,61 @@ class DownloadController private constructor(context: Context) {
         }
         var segments = parseHlsSegmentUrls(playlist, item.url)
         if (segments.isEmpty()) throw IOException("No segments in playlist")
+        return runSegmentJoin(
+            session,
+            segments.map { SegmentRef(it) }
+        ) { expectedCount ->
+            // The run's one fresh playlist: the same segment count
+            // means the same film carrying fresh signed URLs.
+            val freshText = try {
+                fetchHlsPlaylistText(session)
+            } catch (x: Exception) {
+                null
+            }
+            if (freshText == null) {
+                null
+            } else {
+                val fresh = parseHlsSegmentUrls(freshText, item.url)
+                if (fresh.size == expectedCount) {
+                    fresh.map { SegmentRef(it) }
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * The segment-join core shared by HLS (v1.3.2) and DASH
+     * (v1.6): append [firstSegments] one by one into the .part
+     * file — for both formats the concatenation is the playable
+     * stream. Single-path on purpose (role null): segment order
+     * matters, so the parallel chunk engine cannot apply.
+     *
+     * Resume rule (unchanged since HLS): [DownloadItem.hlsSegmentsDone]
+     * counts the segments fully written — DASH items share those
+     * counters — and the .part length always equals
+     * [DownloadItem.downloadedBytes]; a segment interrupted
+     * mid-write is rolled back out to keep that true. The counter
+     * is persisted after every segment, so even an app restart
+     * resumes mid-list.
+     *
+     * Each segment is retried up to HLS_SEGMENT_ATTEMPTS times
+     * with a growing backoff (v1.5), and a link-dead segment
+     * (403/410) first earns the run's one list refresh via
+     * [refreshSegments] — the caller re-reads its playlist or
+     * manifest and returns the fresh segment list, but only when
+     * it still describes the same stream (same segment count).
+     *
+     * Returns true when every segment is in; false when stopped.
+     */
+    private suspend fun runSegmentJoin(
+        session: RunSession,
+        firstSegments: List<SegmentRef>,
+        refreshSegments: (Int) -> List<SegmentRef>?
+    ): Boolean {
+        val item = session.item
+        var segments = firstSegments
         synchronized(item.ioLock) { item.hlsSegmentCount = segments.size }
 
         val part = partFile(item)
@@ -1425,7 +1515,7 @@ class DownloadController private constructor(context: Context) {
             }
         }
 
-        var playlistRefreshed = false
+        var listRefreshed = false
         RandomAccessFile(part, "rw").use { raf ->
             if (startIndex == 0) {
                 raf.setLength(0)
@@ -1449,9 +1539,12 @@ class DownloadController private constructor(context: Context) {
                     var countedCell = false
                     var conn: HttpURLConnection? = null
                     try {
-                        val opened = openForUrl(item, segments[index], null)
+                        val opened = openForUrl(item, segments[index].url, null)
                         conn = opened.first
                         session.connections += conn
+                        segments[index].range?.let {
+                            conn.setRequestProperty("Range", it)
+                        }
                         val code = conn.responseCode
                         if (code !in 200..299) {
                             throw IOException("Segment answered HTTP $code")
@@ -1491,22 +1584,18 @@ class DownloadController private constructor(context: Context) {
                         }
                         if (session.stopped) return false
                         attempt++
-                        if (isLinkDead(e) && !playlistRefreshed) {
-                            playlistRefreshed = true
+                        if (isLinkDead(e) && !listRefreshed) {
+                            listRefreshed = true
                             item.linkRefreshing = true
-                            val freshText = try {
-                                fetchHlsPlaylistText(session)
+                            val freshSegments = try {
+                                refreshSegments(segments.size)
                             } catch (x: Exception) {
                                 null
                             } finally {
                                 item.linkRefreshing = false
                             }
-                            if (freshText != null) {
-                                val freshSegments =
-                                    parseHlsSegmentUrls(freshText, item.url)
-                                if (freshSegments.size == segments.size) {
-                                    segments = freshSegments
-                                }
+                            if (freshSegments != null) {
+                                segments = freshSegments
                             }
                         }
                         if (attempt >= HLS_SEGMENT_ATTEMPTS) throw e
@@ -1540,6 +1629,91 @@ class DownloadController private constructor(context: Context) {
         }
         synchronized(item.ioLock) { item.totalBytes = item.downloadedBytes }
         return true
+    }
+
+    /**
+     * v1.6's DASH transfer: fetch the item's MPD manifest, parse
+     * it with [MpdParser], re-select the representation the user
+     * picked in the media sheet (its height rides in
+     * [DownloadItem.quality]; no pick means the best), and join
+     * its segments through the same core HLS uses — for fMP4
+     * segments the concatenation, init segment first, is the
+     * playable file.
+     *
+     * Honest refusals, mirroring HLS: a body that is not a
+     * manifest; a DRM-protected representation; a live (dynamic)
+     * manifest — recording a live stream is a different feature;
+     * and a manifest with no downloadable video.
+     *
+     * Checkpoint A scope: when the manifest carries sound as a
+     * separate audio track, only the video joins here — the sheet
+     * says so on the row before the user commits. The mux that
+     * marries the two tracks is Checkpoint B.
+     */
+    private suspend fun runDashDownload(session: RunSession): Boolean {
+        val item = session.item
+        // Despite the name this is a plain GET of the item's own
+        // URL with the item's headers — the manifest fetch wants
+        // exactly that.
+        val text = fetchHlsPlaylistText(session)
+        val mpd = try {
+            MpdParser.parse(text, item.url)
+        } catch (e: IllegalArgumentException) {
+            throw IOException(e.message ?: "Not a DASH manifest")
+        }
+        if (mpd.isLive) {
+            throw IOException("Live stream — recording is not supported yet")
+        }
+        val rep = selectDashRepresentation(item, mpd)
+            ?: throw IOException(
+                if (mpd.video.any { it.drm }) {
+                    "Protected stream (DRM) — cannot download"
+                } else {
+                    "No downloadable video in this manifest"
+                }
+            )
+        return runSegmentJoin(session, rep.segments) { expectedCount ->
+            // The run's one fresh manifest: signed segment URLs
+            // die with the manifest that carried them, so a
+            // link-dead segment re-reads the MPD and re-selects
+            // the same representation — accepted only when the
+            // fresh list still counts the same segments.
+            val freshText = try {
+                fetchHlsPlaylistText(session)
+            } catch (x: Exception) {
+                null
+            }
+            val freshMpd = freshText?.let {
+                try {
+                    MpdParser.parse(it, item.url)
+                } catch (x: Exception) {
+                    null
+                }
+            }
+            val freshRep = freshMpd?.let { selectDashRepresentation(item, it) }
+            freshRep?.segments?.takeIf { it.size == expectedCount }
+        }
+    }
+
+    /**
+     * The video representation a DASH item downloads: the one
+     * whose height matches the quality the user picked, else the
+     * highest-bandwidth one. DRM representations never qualify.
+     */
+    private fun selectDashRepresentation(
+        item: DownloadItem,
+        mpd: DashManifest
+    ): DashRepresentation? {
+        val usable = mpd.video.filter { !it.drm }
+        if (usable.isEmpty()) return null
+        val wantedHeight = item.quality
+            ?.removeSuffix("p")?.toIntOrNull()
+        if (wantedHeight != null) {
+            usable.filter { it.height == wantedHeight }
+                .maxByOrNull { it.bandwidth }
+                ?.let { return it }
+        }
+        return usable.maxByOrNull { it.bandwidth }
     }
 
     /** Rename .part to the final name (collision-safe) and settle. */
