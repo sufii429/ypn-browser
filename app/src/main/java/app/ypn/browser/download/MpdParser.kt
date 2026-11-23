@@ -269,11 +269,11 @@ object MpdParser {
         var out = template.replace("$$", "\u0001")
         out = out.replace("\$RepresentationID\$", rep.attrs["id"] ?: "")
         out = out.replace("\$Bandwidth\$", rep.attrs["bandwidth"] ?: "0")
-        out = Regex("""\$Number%(0\d+)d\$""").replace(out) { match ->
+        out = Regex("""\${'$'}Number%(0\d+)d\${'$'}""").replace(out) { match ->
             String.format("%0${match.groupValues[1]}d", number ?: 0)
         }
         out = out.replace("\$Number\$", (number ?: 0).toString())
-        out = Regex("""\$Time%(0\d+)d\$""").replace(out) { match ->
+        out = Regex("""\${'$'}Time%(0\d+)d\${'$'}""").replace(out) { match ->
             String.format("%0${match.groupValues[1]}d", time ?: 0L)
         }
         out = out.replace("\$Time\$", (time ?: 0L).toString())
