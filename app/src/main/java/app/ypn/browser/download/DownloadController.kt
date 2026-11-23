@@ -276,6 +276,22 @@ class DownloadController private constructor(context: Context) {
         mimeType: String?,
         cookie: String?
     ) {
+        // v1.6: a manifest the WebView cannot display lands here
+        // too — an .mpd opened directly in the address bar. It is
+        // not a file, so it goes to the DASH engine, never to the
+        // file probe (which would faithfully fetch a few KB of XML
+        // and call that the download).
+        if (isDashManifestUrl(url)) {
+            enqueueDash(
+                url = url,
+                suggestedName = dashFileName(url),
+                referer = null,
+                userAgent = userAgent,
+                cookie = cookie,
+                quality = null
+            )
+            return
+        }
         enqueue(
             url = url,
             suggestedName = deriveFileName(url, contentDisposition),
@@ -289,6 +305,16 @@ class DownloadController private constructor(context: Context) {
     /** From the Downloads screen's paste-a-URL box. False = not a URL. */
     fun addManualDownload(raw: String): Boolean {
         val url = normalizeDownloadUrl(raw) ?: return false
+        // v1.6: a pasted .mpd is a DASH download, not a file.
+        if (isDashManifestUrl(url)) {
+            enqueueDash(
+                url = url,
+                suggestedName = dashFileName(url),
+                referer = null,
+                userAgent = null
+            )
+            return true
+        }
         enqueue(
             url = url,
             suggestedName = deriveFileName(url, null),
@@ -437,6 +463,17 @@ class DownloadController private constructor(context: Context) {
      * resulting name has no dot at all. Blank when neither source
      * yields a name (sanitizeFileName turns that into "download").
      */
+    /** A DASH manifest URL, by its path's extension (query ignored). */
+    private fun isDashManifestUrl(url: String): Boolean =
+        url.substringBefore('?').substringBefore('#')
+            .lowercase().endsWith(".mpd")
+
+    /** The MP4 name a manifest download takes: the manifest's own name, re-extended. */
+    private fun dashFileName(url: String): String {
+        val base = deriveFileName(url, null).substringBeforeLast('.')
+        return (if (base.isBlank()) "video" else base) + ".mp4"
+    }
+
     private fun deriveFileName(url: String, contentDisposition: String?): String {
         val headerName = contentDisposition?.let { disposition ->
             // RFC 5987 form first: filename*=UTF-8''movie%20name.mkv —
